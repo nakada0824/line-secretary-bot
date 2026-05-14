@@ -76,3 +76,24 @@ export async function getAllUsers(): Promise<Array<{ user_id: string; display_na
   const { data } = await supabase.from('users').select('user_id, display_name, location');
   return (data ?? []) as Array<{ user_id: string; display_name: string; location: string }>;
 }
+
+export async function getUserDisplayName(userId: string): Promise<string> {
+  const { data } = await supabase
+    .from('users')
+    .select('display_name')
+    .eq('user_id', userId)
+    .single();
+  return (data as { display_name: string } | null)?.display_name ?? 'ユーザー';
+}
+
+export async function getUser(
+  userId: string
+): Promise<{ display_name: string; location: string }> {
+  const { data } = await supabase
+    .from('users')
+    .select('display_name, location')
+    .eq('user_id', userId)
+    .single();
+  const row = data as { display_name: string; location: string } | null;
+  return { display_name: row?.display_name ?? 'ユーザー', location: row?.location ?? 'Tokyo' };
+}

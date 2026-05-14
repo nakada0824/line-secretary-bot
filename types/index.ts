@@ -21,6 +21,10 @@ export type Intent =
   | 'ADD_CONSUMABLE'
   | 'GET_CONSUMABLES'
   | 'GET_TEMPLATE'
+  | 'MORNING_REPORT'
+  | 'EVENING_REPORT'
+  | 'WEEKLY_SUMMARY'
+  | 'CHECK_REMINDERS'
   | 'CHAT';
 
 export interface IntentResult {

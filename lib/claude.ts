@@ -41,6 +41,10 @@ export async function detectIntent(
 - ADD_CONSUMABLE: 消耗品登録 → data: {name, reminder_days}
 - GET_CONSUMABLES: 消耗品一覧 → data: {}
 - GET_TEMPLATE: 定型文呼び出し → data: {name}
+- MORNING_REPORT: 朝のレポート → data: {} ※「おはよう」「おはようございます」「朝のレポート」「今日の予定まとめて」などに反応
+- EVENING_REPORT: 夜の振り返りレポート → data: {} ※「おやすみ」「おやすみなさい」「振り返り」「今日どうだった」「夜のレポート」などに反応
+- WEEKLY_SUMMARY: 週次サマリー → data: {} ※「週次サマリー」「今週の振り返り」「今週どうだった」などに反応
+- CHECK_REMINDERS: リマインド確認 → data: {} ※「リマインド確認」「次の予定は」「期限確認」などに反応
 - CHAT: 自由会話・その他 → data: {}
 
 日時変換ルール:

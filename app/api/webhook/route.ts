@@ -3,6 +3,7 @@ import { verifySignature, replyMessage, textMessage } from '@/lib/line';
 import { upsertUser, getConversationHistory, saveConversation } from '@/lib/supabase';
 import { detectIntent } from '@/lib/claude';
 import { handleIntent } from '@/lib/handlers';
+import { runBackgroundReminders } from '@/lib/handlers/report';
 import { LineEvent } from '@/types';
 
 export const runtime = 'nodejs';
@@ -34,7 +35,22 @@ async function processEvent(event: LineEvent): Promise<void> {
     if (event.replyToken) {
       await replyMessage(event.replyToken, [
         textMessage(
-          `こんにちは！LINE秘書Botです🤖\n\nあなたの日常をサポートします！\n\n【できること】\n📅 予定管理\n✅ タスク管理\n🛒 買い物リスト\n🎯 習慣トラッカー\n📝 メモ\n🔍 調べ物・お店検索\n🎂 誕生日リマインド\n\n何でも気軽に話しかけてください！`
+          [
+            'こんにちは！LINE秘書Botです🤖',
+            '',
+            'あなたの日常をサポートします！',
+            '',
+            '【話しかけ方の例】',
+            '🌅 「おはよう」→ 朝のレポート',
+            '🌙 「おやすみ」→ 夜の振り返り',
+            '📅 「明日14時に会議」→ 予定追加',
+            '✅ 「資料作成 優先度4 締め切り金曜」→ タスク追加',
+            '🛒 「牛乳と卵を買い物リストに追加」',
+            '🎯 「筋トレした」→ 習慣記録',
+            '🔍 「〇〇調べて」「渋谷で焼肉検索」',
+            '',
+            '気軽に話しかけてください！',
+          ].join('\n')
         ),
       ]);
     }
@@ -55,10 +71,12 @@ async function processEvent(event: LineEvent): Promise<void> {
     const intentResult = await detectIntent(userMessage, history);
     const response = await handleIntent(userId, intentResult, userMessage, history);
 
+    // 全操作を並列実行：返信・会話保存・リマインダーチェック
     await Promise.all([
+      replyMessage(replyToken, [textMessage(response)]),
       saveConversation(userId, 'user', userMessage),
       saveConversation(userId, 'assistant', response),
-      replyMessage(replyToken, [textMessage(response)]),
+      runBackgroundReminders(userId),
     ]);
   } catch (err) {
     console.error('processEvent error:', err);
@@ -67,7 +85,7 @@ async function processEvent(event: LineEvent): Promise<void> {
         textMessage('すみません、エラーが発生しました 🙇\nもう一度試してください。'),
       ]);
     } catch {
-      // ignore reply error
+      // ignore
     }
   }
 }

@@ -7,6 +7,7 @@ import * as memo from './memo';
 import * as search from './search';
 import * as birthday from './birthday';
 import * as chatHandler from './chat';
+import * as report from './report';
 
 export async function handleIntent(
   userId: string,
@@ -61,6 +62,14 @@ export async function handleIntent(
       return shopping.addConsumable(userId, data);
     case 'GET_CONSUMABLES':
       return shopping.getConsumables(userId);
+    case 'MORNING_REPORT':
+      return report.getMorningReport(userId);
+    case 'EVENING_REPORT':
+      return report.getEveningReport(userId);
+    case 'WEEKLY_SUMMARY':
+      return report.getWeeklySummaryReport(userId);
+    case 'CHECK_REMINDERS':
+      return report.getCheckReminders(userId);
     case 'CHAT':
     default:
       return chatHandler.chat(userMessage, history);
