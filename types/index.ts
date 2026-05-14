@@ -16,6 +16,7 @@ export type Intent =
   | 'GET_MEMO'
   | 'SEARCH'
   | 'SEARCH_RESTAURANT'
+  | 'WEATHER_SEARCH'
   | 'ADD_BIRTHDAY'
   | 'GET_BIRTHDAYS'
   | 'ADD_CONSUMABLE'

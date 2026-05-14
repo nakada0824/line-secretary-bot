@@ -36,6 +36,7 @@ export async function detectIntent(
 - GET_MEMO: メモ検索 → data: {query?}
 - SEARCH: 調べ物 → data: {query}
 - SEARCH_RESTAURANT: お店検索 → data: {area?, genre?, budget?, keywords?}
+- WEATHER_SEARCH: 天気検索 → data: {query} ※「今日の天気」「明日雨?」「東京の天気」「天気教えて」などに反応
 - ADD_BIRTHDAY: 誕生日登録 → data: {name, birth_date(YYYY-MM-DD)}
 - GET_BIRTHDAYS: 誕生日一覧 → data: {}
 - ADD_CONSUMABLE: 消耗品登録 → data: {name, reminder_days}
@@ -105,22 +106,31 @@ LINEのメッセージなので簡潔に（200字以内を目安）。`;
     : 'すみません、うまく返答できませんでした。';
 }
 
-export async function searchWithClaude(query: string): Promise<string> {
+async function searchWithWebSearch(userPrompt: string, fallback: string): Promise<string> {
   const response = await anthropic.messages.create({
     model: MODEL,
     max_tokens: 1024,
-    messages: [
-      {
-        role: 'user',
-        content: `以下の質問に答えてください。LINE向けに絵文字・箇条書きで読みやすく日本語でまとめてください（400字以内）。
-※私の学習データには制限があるため、最新情報が必要な場合はその旨伝えてください。
-
-質問: ${query}`,
-      },
-    ],
+    tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+    messages: [{ role: 'user', content: userPrompt }],
   });
 
-  return response.content[0].type === 'text' ? response.content[0].text : '検索できませんでした。';
+  const textBlock = response.content.find((b) => b.type === 'text');
+  return textBlock && textBlock.type === 'text' ? textBlock.text : fallback;
+}
+
+export async function searchWithClaude(query: string): Promise<string> {
+  return searchWithWebSearch(
+    `以下の質問をウェブで検索して、LINE向けに絵文字・箇条書きで読みやすく日本語でまとめてください（400字以内）。\n\n質問: ${query}`,
+    '検索できませんでした。'
+  );
+}
+
+export async function searchWeatherWithClaude(query: string): Promise<string> {
+  const location = query || '東京';
+  return searchWithWebSearch(
+    `weathernews.jp で「${location}」の天気予報を検索して、今日・明日の天気を絵文字付きでLINE向けに簡潔に日本語でまとめてください。`,
+    '天気情報を取得できませんでした。'
+  );
 }
 
 export async function searchRestaurantWithClaude(params: {
@@ -136,23 +146,12 @@ export async function searchRestaurantWithClaude(params: {
     params.keywords ? `その他: ${params.keywords}` : '',
   ]
     .filter(Boolean)
-    .join('\n');
+    .join('、');
 
-  const response = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 1024,
-    messages: [
-      {
-        role: 'user',
-        content: `以下の条件でおすすめのレストラン・お店を3〜5件教えてください。LINE向けに絵文字付きで読みやすく日本語でまとめてください。
-※実際の営業時間・価格は変わる場合があるため、食べログ・Googleマップでご確認ください。
-
-${conditions}`,
-      },
-    ],
-  });
-
-  return response.content[0].type === 'text' ? response.content[0].text : 'お店を探せませんでした。';
+  return searchWithWebSearch(
+    `食べログまたはGoogleマップで${conditions}のおすすめレストラン・お店を検索して、3〜5件を絵文字付きでLINE向けに日本語でまとめてください。営業時間や価格帯も含めてください。`,
+    'お店を探せませんでした。'
+  );
 }
 
 export async function generateMorningMessage(data: {

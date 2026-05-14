@@ -1,4 +1,4 @@
-import { searchWithClaude, searchRestaurantWithClaude } from '@/lib/claude';
+import { searchWithClaude, searchRestaurantWithClaude, searchWeatherWithClaude } from '@/lib/claude';
 
 export async function searchQuery(query: string): Promise<string> {
   if (!query) return '調べたいことを教えてください。\n\n例：「東京タワーの高さ調べて」';
@@ -12,4 +12,8 @@ export async function searchRestaurant(data: Record<string, unknown>): Promise<s
     budget: data.budget as string | undefined,
     keywords: data.keywords as string | undefined,
   });
+}
+
+export async function searchWeather(query: string): Promise<string> {
+  return searchWeatherWithClaude(query);
 }
