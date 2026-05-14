@@ -189,7 +189,9 @@ export async function chat(
 ): Promise<string> {
   const systemPrompt = `あなたは親切で気配りのできるLINE秘書Botです。
 ユーザーをサポートする秘書として、温かく・フレンドリーに日本語で返答してください。
-LINEのメッセージなので簡潔に（200字以内を目安）。`;
+LINEのメッセージなので簡潔に（200字以内を目安）。
+意図が不明な場合や情報が足りない場合は、具体的に確認してください。
+絵文字を適度に使い、読みやすく返答してください。`;
 
   const messages = [
     ...history.map((h) => ({ role: h.role as 'user' | 'assistant', content: h.content })),
@@ -209,15 +211,52 @@ LINEのメッセージなので簡潔に（200字以内を目安）。`;
 }
 
 async function searchWithWebSearch(userPrompt: string, fallback: string): Promise<string> {
-  const response = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 1024,
-    tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-    messages: [{ role: 'user', content: userPrompt }],
-  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const messages: any[] = [{ role: 'user', content: userPrompt }];
 
-  const textBlock = response.content.find((b) => b.type === 'text');
-  return textBlock && textBlock.type === 'text' ? textBlock.text : fallback;
+  for (let turn = 0; turn < 5; turn++) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const response = await (anthropic.messages.create as any)({
+      model: MODEL,
+      max_tokens: 1024,
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      messages,
+    });
+
+    const textBlock = response.content.find((b: { type: string }) => b.type === 'text');
+
+    if (response.stop_reason === 'end_turn') {
+      return textBlock?.text ?? fallback;
+    }
+
+    if (response.stop_reason === 'tool_use') {
+      // Add assistant response (including tool_use blocks) to message history
+      messages.push({ role: 'assistant', content: response.content });
+
+      // Build tool_result blocks — Anthropic executes web_search server-side
+      const toolUseBlocks = response.content.filter(
+        (b: { type: string }) => b.type === 'tool_use'
+      );
+
+      if (toolUseBlocks.length === 0) {
+        return textBlock?.text ?? fallback;
+      }
+
+      const toolResults = toolUseBlocks.map((b: { id: string }) => ({
+        type: 'tool_result',
+        tool_use_id: b.id,
+        content: '',
+      }));
+
+      messages.push({ role: 'user', content: toolResults });
+      continue;
+    }
+
+    // max_tokens or other stop reasons — return any text found
+    return textBlock?.text ?? fallback;
+  }
+
+  return fallback;
 }
 
 export async function searchWithClaude(query: string): Promise<string> {

@@ -54,6 +54,18 @@ export async function handleIntent(
       return search.searchQuery(data.query as string);
     case 'SEARCH_RESTAURANT':
       return search.searchRestaurant(data);
+    case 'SEARCH_OUTING':
+      return search.searchOuting(data);
+    case 'SEARCH_NEWS':
+      return search.searchNews(data);
+    case 'SEARCH_ENTERTAINMENT':
+      return search.searchEntertainment(data);
+    case 'SEARCH_RECIPE':
+      return search.searchRecipe(data);
+    case 'SUMMARIZE_URL':
+      return search.summarizeUrl(data);
+    case 'TRANSLATE':
+      return search.translate(data);
     case 'WEATHER_SEARCH':
       return search.searchWeather(data.query as string);
     case 'ADD_BIRTHDAY':
