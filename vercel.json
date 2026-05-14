@@ -1,0 +1,20 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/morning",
+      "schedule": "0 22 * * *"
+    },
+    {
+      "path": "/api/cron/evening",
+      "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/cron/reminder",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/weekly",
+      "schedule": "0 13 * * 0"
+    }
+  ]
+}
