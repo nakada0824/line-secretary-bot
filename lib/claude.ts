@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { IntentResult } from '@/types';
+import { detectByRules } from '@/lib/intent-rules';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const MODEL = 'claude-sonnet-4-6';
@@ -12,114 +13,147 @@ export async function detectIntent(
   message: string,
   history: Array<{ role: 'user' | 'assistant'; content: string }>
 ): Promise<IntentResult> {
+  // ── Phase 1: ルールベース高速判定 ──────────────────────────────────────────
+  const ruleResult = detectByRules(message);
+  if (ruleResult) return ruleResult;
+
+  // ── Phase 2: Claude による詳細判定 ─────────────────────────────────────────
   const systemPrompt = `あなたはLINE秘書Botのインテント検出エンジンです。
 現在の日時（JST）: ${jstNow()}
 
-ユーザーのメッセージを分析し、以下のJSONのみを返してください（説明文不要）：
+以下のJSONのみを返してください（前後に説明文・改行・コードブロック不要）：
 {"intent":"インテント名","data":{...}}
 
-━━━ スケジュール・タスク ━━━
-- ADD_SCHEDULE: 予定追加 → data: {title, start_time(ISO8601), end_time?(ISO8601), location?, description?}
-- GET_SCHEDULES: 予定確認 → data: {date?: "today"|"tomorrow"|"week"}
-- DELETE_SCHEDULE: 予定削除 → data: {query}
-- ADD_TASK: タスク追加 → data: {title, priority?(1-5, デフォルト3), deadline?(ISO8601), description?}
-- GET_TASKS: タスク確認 → data: {filter?: "all"|"pending"|"completed"}
-- COMPLETE_TASK: タスク完了 → data: {query}
-- DELETE_TASK: タスク削除 → data: {query}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【重要】日本語の質問パターン対応表
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+「〜は？」「〜ある？」「〜教えて」「〜見せて」「〜確認」「〜一覧」
+「〜どう？」「〜調べて」「〜知りたい」 → すべて「情報取得」の意図
 
-━━━ 買い物・消耗品 ━━━
-- ADD_SHOPPING: 買い物追加 → data: {items: [{item, quantity?}]}
-- GET_SHOPPING: 買い物リスト確認 → data: {}
-- DELETE_SHOPPING: 買い物削除 → data: {item}
-- COMPLETE_SHOPPING: 購入済み → data: {item}
-- ADD_CONSUMABLE: 消耗品登録 → data: {name, reminder_days}
-- GET_CONSUMABLES: 消耗品一覧 → data: {}
+例:
+「今日の予定は？」        → GET_SCHEDULES {date:"today"}
+「明日の予定ある？」      → GET_SCHEDULES {date:"tomorrow"}
+「今週何がある？」        → GET_SCHEDULES {date:"week"}
+「タスク見せて」          → GET_TASKS {filter:"pending"}
+「やること確認」          → GET_TASKS {filter:"pending"}
+「買い物リストは？」      → GET_SHOPPING {}
+「習慣教えて」            → GET_HABITS {}
 
-━━━ 習慣・メモ・誕生日 ━━━
-- LOG_HABIT: 習慣記録 → data: {habit_name}
-- GET_HABITS: 習慣一覧 → data: {}
-- ADD_MEMO: メモ追加 → data: {content, tags?:[]}
-- GET_MEMO: メモ検索 → data: {query?}
-- GET_TEMPLATE: 定型文 → data: {name}
-- ADD_BIRTHDAY: 誕生日登録 → data: {name, birth_date(YYYY-MM-DD)}
-- GET_BIRTHDAYS: 誕生日一覧 → data: {}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【インテント一覧】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-━━━ レポート ━━━
-- MORNING_REPORT: 朝のレポート → data: {}  ※「おはよう」「朝のレポート」「今日の予定まとめて」
-- EVENING_REPORT: 夜の振り返り → data: {}  ※「おやすみ」「振り返り」「今日どうだった」
-- WEEKLY_SUMMARY: 週次サマリー → data: {}  ※「週次サマリー」「今週の振り返り」
-- CHECK_REMINDERS: リマインド確認 → data: {}  ※「次の予定は」「期限確認」
+■ 予定
+- ADD_SCHEDULE: 「〜に〜を追加」「〜時に〜」「明日14時会議」
+  data: {title, start_time(ISO8601), end_time?, location?, description?}
+- GET_SCHEDULES: 「〜の予定は？」「予定教えて」「今日何がある？」
+  data: {date?: "today"|"tomorrow"|"week"}
+- DELETE_SCHEDULE: 「〜の予定を削除/消して」
+  data: {query}
 
-━━━ 検索・変換（重要：以下を必ず区別すること） ━━━
+■ タスク
+- ADD_TASK: 「〜をタスクに追加」「〜をやること登録」「〜 優先度4 締め切り金曜」
+  data: {title, priority?(1-5, デフォルト3), deadline?(ISO8601), description?}
+- GET_TASKS: 「タスク一覧」「やること教えて」「タスクは？」
+  data: {filter?: "all"|"pending"|"completed"}
+- COMPLETE_TASK: 「〜を完了」「〜終わった」「〜やった」
+  data: {query}
+- DELETE_TASK: 「タスク〜を削除」
+  data: {query}
 
-[1] WEATHER_SEARCH — 天気・気象のみ
-  条件: 「天気」「気温」「雨」「晴れ」「曇り」「傘」「台風」「気象」などの気象ワードを含む
-  data: {query: 場所や日付の情報}
-  例: 「今日の天気」「明日雨？」「大阪の天気教えて」「傘いる？」
-  禁止: 飲食店・旅行・ニュース・レシピ・エンタメ検索にはこのインテントを使わない
+■ 買い物・消耗品
+- ADD_SHOPPING: 「〜を買い物リストに」「〜買っておいて」
+  data: {items: [{item, quantity?}]}
+- GET_SHOPPING: 「買い物リストは？」「何を買うんだっけ」
+  data: {}
+- DELETE_SHOPPING: 「〜を買い物リストから削除」
+  data: {item}
+- COMPLETE_SHOPPING: 「〜買った」「〜購入済み」
+  data: {item}
+- ADD_CONSUMABLE: 「〜の消耗品を登録」
+  data: {name, reminder_days}
+- GET_CONSUMABLES: 「消耗品一覧」
+  data: {}
 
-[2] SEARCH_RESTAURANT — 飲食店・カフェ・バーのみ
-  条件: 料理ジャンル・食事・飲食店・カフェ・バーに関する検索
-  data: {area?: エリア, genre?: ジャンル, budget?: 予算, keywords?: その他}
-  例: 「イタリアン探して」「お店教えて」「カフェどこかある？」「ランチどこ行く？」
-      「居酒屋おすすめ」「ラーメン屋教えて」「ディナーの店」「焼肉食べたい」
-  禁止: 天気・旅行・レシピには使わない
+■ 習慣・メモ
+- LOG_HABIT: 「〜した」「〜やった」（習慣の記録文脈）
+  data: {habit_name}
+- GET_HABITS: 「習慣一覧」「習慣は？」
+  data: {}
+- ADD_MEMO: 「〜をメモして」「〜を記録して」
+  data: {content, tags?:[]}
+- GET_MEMO: 「メモを見せて」「〜についてのメモ」
+  data: {query?}
+- ADD_BIRTHDAY: 「〜の誕生日は〜」
+  data: {name, birth_date(YYYY-MM-DD)}
+- GET_BIRTHDAYS: 「誕生日一覧」
+  data: {}
+- GET_TEMPLATE: 「〜の定型文」
+  data: {name}
 
-[3] SEARCH_OUTING — お出かけ・旅行・観光スポット
-  条件: 旅行先・観光地・お出かけ先・レジャーの提案・検索
-  data: {from?: 出発地, area?: 目的地エリア, budget?: 予算, duration?: "日帰り"|"1泊"|"週末"|"長期", preferences?: キーワード}
-  例: 「週末どこか行きたい」「旅行先教えて」「日帰りでおすすめ」「東京から日帰り旅行」
-      「予算1万円で旅行したい」「温泉行きたい」「子連れで行けるところ」
+■ レポート
+- MORNING_REPORT: 「おはよう」「朝のレポート」
+  data: {}
+- EVENING_REPORT: 「おやすみ」「夜のレポート」「今日の振り返り」
+  data: {}
+- WEEKLY_SUMMARY: 「週次サマリー」「今週の振り返り」
+  data: {}
+- CHECK_REMINDERS: 「リマインド確認」「次の予定は？」
+  data: {}
 
-[4] SEARCH_NEWS — ニュース・最新情報
-  条件: ニュース・時事・最新情報・トレンドに関する検索
-  data: {category?: "総合"|"スポーツ"|"政治"|"経済"|"テクノロジー"|"エンタメ"|"国際", query?: 検索ワード}
-  例: 「今日のニュース教えて」「最新ニュースは？」「スポーツニュース」「経済ニュース」「今話題のことは？」
+■ 検索・変換（重要：以下を必ず区別すること）
 
-[5] SEARCH_ENTERTAINMENT — 映画・ドラマ・アニメ・音楽・本
-  条件: エンタメ作品（映画/ドラマ/アニメ/音楽/本）のおすすめ・検索
-  data: {type?: "映画"|"ドラマ"|"アニメ"|"音楽"|"本", genre?: ジャンル, keywords?: その他}
-  例: 「おすすめ映画教えて」「面白いドラマある？」「ホラー映画が見たい」「アニメおすすめ」「感動できる映画」
+[WEATHER_SEARCH] 天気・気象のみ
+  「天気」「気温」「雨」「晴れ」「曇り」「傘」「台風」が含まれる
+  飲食店・旅行ワードが同時にある場合はWEATHER_SEARCHにしない
+  data: {query: "場所 + 日付情報"}
+  ✓「今日の天気は？」「明日雨？」「傘いる？」「大阪の天気教えて」
+  ✗「イタリアン探して」← 絶対にWEATHER_SEARCHにしない
 
-[6] SEARCH_RECIPE — 料理レシピ
-  条件: 特定の料理の作り方・レシピを調べる
-  data: {dish: 料理名, keywords?: 追加条件（簡単/時短/ヘルシー等）}
-  例: 「カレーのレシピ教えて」「唐揚げの作り方」「簡単パスタレシピ」「ヘルシーなレシピ」
-  禁止: 飲食店検索(SEARCH_RESTAURANT)とは区別する。「作り方」「レシピ」がある→SEARCH_RECIPE、「お店」「探して」がある→SEARCH_RESTAURANT
+[SEARCH_RESTAURANT] 飲食店・カフェのみ
+  料理ジャンル名・食事・飲食店・カフェ・居酒屋に関する「探す・おすすめ・どこ」
+  data: {area?, genre?, budget?, keywords?}
+  ✓「イタリアン探して」「お店教えて」「渋谷でランチ」「焼肉食べたい」
+  ✓「カフェどこかある？」「居酒屋おすすめ」「ラーメン屋教えて」
+  ✗「カレーのレシピ」← SEARCH_RECIPE へ
 
-[7] SUMMARIZE_URL — URLの要約
-  条件: メッセージにhttp://またはhttps://で始まるURLが含まれる
-  data: {url: URLのみを抽出した文字列}
-  例: 「https://example.com」「https://news.yahoo.co.jp/... を要約して」「このURL読んで https://...」
+[SEARCH_OUTING] 旅行・観光・お出かけ
+  data: {from?, area?, budget?, duration?, preferences?}
+  ✓「週末どこか行きたい」「日帰り旅行おすすめ」「温泉行きたい」
 
-[8] TRANSLATE — 翻訳
-  条件: 「翻訳」「〇〇語に」「英語で」「日本語で」などの翻訳指示
-  data: {text: 翻訳するテキスト, target_lang: 翻訳先言語（日本語表記: "英語"/"日本語"/"中国語"等）, source_lang?: 翻訳元言語}
-  例: 「これを英語に翻訳して」「Hello を日本語に」「この文章を中国語にして」
+[SEARCH_NEWS] ニュース・時事
+  data: {category?, query?}
+  ✓「今日のニュース」「最新情報は？」「スポーツニュース」
 
-[9] SEARCH — 上記以外の一般的な調べ物
-  条件: 天気/飲食店/旅行/ニュース/エンタメ/レシピ/URL/翻訳のいずれでもない情報検索
-  data: {query: 検索ワード}
-  例: 「東京タワーの高さ」「〇〇の意味教えて」「〇〇って何？」「〇〇について教えて」
+[SEARCH_ENTERTAINMENT] 映画・ドラマ・アニメ・音楽・本
+  data: {type?, genre?, keywords?}
+  ✓「おすすめ映画教えて」「面白いドラマある？」
 
-━━━ 判定フロー（上から順に評価し最初に一致したものを使う） ━━━
-1. URLあり（http/https）→ SUMMARIZE_URL
-2. 翻訳ワード（翻訳/〇〇語に/英語で）→ TRANSLATE
-3. 気象ワード（天気/雨/晴れ/気温/傘/台風）→ WEATHER_SEARCH
-4. レシピワード（レシピ/作り方/材料/調理）→ SEARCH_RECIPE
-5. 飲食店ワード（レストラン/カフェ/ランチ/ディナー/料理ジャンル名/居酒屋）→ SEARCH_RESTAURANT
-6. 旅行・観光ワード（旅行/観光/日帰り/週末/お出かけ/温泉）→ SEARCH_OUTING
-7. ニュースワード（ニュース/最新/今話題/トレンド）→ SEARCH_NEWS
-8. エンタメワード（映画/ドラマ/アニメ/音楽/本/おすすめ作品）→ SEARCH_ENTERTAINMENT
-9. その他の調べ物 → SEARCH
+[SEARCH_RECIPE] 料理のレシピ・作り方
+  data: {dish, keywords?}
+  ✓「カレーのレシピ」「唐揚げの作り方」
 
-━━━ 日時変換ルール ━━━
-- 「明日」「来週月曜」等は現在日時を基準に絶対ISO8601形式(Asia/Tokyo)へ変換
+[SUMMARIZE_URL] URLを含むメッセージ
+  data: {url}
+
+[TRANSLATE] 翻訳指示
+  data: {text, target_lang, source_lang?}
+  ✓「これを英語に翻訳して」「Hello を日本語に」
+
+[SEARCH] 上記以外の調べ物
+  data: {query}
+  ✓「東京タワーの高さ」「〇〇って何？」「〇〇について教えて」
+
+[CHAT] 雑談・上記に当てはまらない
+  data: {}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【日時変換ルール】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- 相対日時（「明日」「来週月曜」「3日後」等）→ 絶対ISO8601 (Asia/Tokyo)
 - 時刻のみ → 今日の日付を補完
-- 日付のみの締め切り → 23:59:59を設定
-
-━━━ その他 ━━━
-- CHAT: 上記に当てはまらない自由会話 → data: {}`;
+- 日付のみの締め切り → 23:59:59 を設定
+- 「今週」→ date:"week"、「今日」→ date:"today"、「明日」→ date:"tomorrow"`;
 
   const messages = [
     ...history.map((h) => ({ role: h.role as 'user' | 'assistant', content: h.content })),
@@ -129,7 +163,7 @@ export async function detectIntent(
   try {
     const response = await anthropic.messages.create({
       model: MODEL,
-      max_tokens: 512,
+      max_tokens: 300,
       system: systemPrompt,
       messages,
     });
