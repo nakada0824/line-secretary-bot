@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { IntentResult } from '@/types';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const MODEL = 'claude-sonnet-4-20250514';
+const MODEL = 'claude-sonnet-4-6';
 
 function jstNow(): string {
   return new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });

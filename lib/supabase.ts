@@ -6,20 +6,26 @@ export const supabase = createClient(
 );
 
 export async function upsertUser(userId: string): Promise<void> {
-  const { data: existing } = await supabase
-    .from('users')
-    .select('user_id')
-    .eq('user_id', userId)
-    .single();
+  try {
+    const { data: existing } = await supabase
+      .from('users')
+      .select('user_id')
+      .eq('user_id', userId)
+      .single();
 
-  if (!existing) {
-    const profile = await getLineProfile(userId);
-    await supabase.from('users').insert({
-      user_id: userId,
-      display_name: profile?.displayName ?? 'ユーザー',
-      picture_url: profile?.pictureUrl,
-      location: 'Tokyo',
-    });
+    if (!existing) {
+      const profile = await getLineProfile(userId);
+      const { error } = await supabase.from('users').insert({
+        user_id: userId,
+        display_name: profile?.displayName ?? 'ユーザー',
+        picture_url: profile?.pictureUrl ?? null,
+        location: 'Tokyo',
+      });
+      if (error) console.error('[upsertUser insert error]', error.message);
+    }
+  } catch (e) {
+    // テーブル未作成など初期化前でも処理を続行する
+    console.error('[upsertUser error]', e);
   }
 }
 
@@ -39,16 +45,20 @@ export async function getConversationHistory(
   userId: string,
   limit = 10
 ): Promise<Array<{ role: 'user' | 'assistant'; content: string }>> {
-  const { data } = await supabase
-    .from('conversations')
-    .select('role, content')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-    .limit(limit * 2);
+  try {
+    const { data } = await supabase
+      .from('conversations')
+      .select('role, content')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(limit * 2);
 
-  return ((data ?? []) as Array<{ role: string; content: string }>)
-    .reverse()
-    .map((c) => ({ role: c.role as 'user' | 'assistant', content: c.content }));
+    return ((data ?? []) as Array<{ role: string; content: string }>)
+      .reverse()
+      .map((c) => ({ role: c.role as 'user' | 'assistant', content: c.content }));
+  } catch {
+    return [];
+  }
 }
 
 export async function saveConversation(
@@ -56,44 +66,57 @@ export async function saveConversation(
   role: 'user' | 'assistant',
   content: string
 ): Promise<void> {
-  await supabase.from('conversations').insert({ user_id: userId, role, content });
+  try {
+    await supabase.from('conversations').insert({ user_id: userId, role, content });
 
-  // Keep only last 50 messages per user
-  const { data: old } = await supabase
-    .from('conversations')
-    .select('id')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-    .range(50, 9999);
+    const { data: old } = await supabase
+      .from('conversations')
+      .select('id')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .range(50, 9999);
 
-  if (old && old.length > 0) {
-    const ids = (old as Array<{ id: string }>).map((r) => r.id);
-    await supabase.from('conversations').delete().in('id', ids);
+    if (old && old.length > 0) {
+      const ids = (old as Array<{ id: string }>).map((r) => r.id);
+      await supabase.from('conversations').delete().in('id', ids);
+    }
+  } catch (e) {
+    console.error('[saveConversation error]', e);
   }
 }
 
-export async function getAllUsers(): Promise<Array<{ user_id: string; display_name: string; location: string }>> {
+export async function getAllUsers(): Promise<
+  Array<{ user_id: string; display_name: string; location: string }>
+> {
   const { data } = await supabase.from('users').select('user_id, display_name, location');
   return (data ?? []) as Array<{ user_id: string; display_name: string; location: string }>;
 }
 
 export async function getUserDisplayName(userId: string): Promise<string> {
-  const { data } = await supabase
-    .from('users')
-    .select('display_name')
-    .eq('user_id', userId)
-    .single();
-  return (data as { display_name: string } | null)?.display_name ?? 'ユーザー';
+  try {
+    const { data } = await supabase
+      .from('users')
+      .select('display_name')
+      .eq('user_id', userId)
+      .single();
+    return (data as { display_name: string } | null)?.display_name ?? 'ユーザー';
+  } catch {
+    return 'ユーザー';
+  }
 }
 
 export async function getUser(
   userId: string
 ): Promise<{ display_name: string; location: string }> {
-  const { data } = await supabase
-    .from('users')
-    .select('display_name, location')
-    .eq('user_id', userId)
-    .single();
-  const row = data as { display_name: string; location: string } | null;
-  return { display_name: row?.display_name ?? 'ユーザー', location: row?.location ?? 'Tokyo' };
+  try {
+    const { data } = await supabase
+      .from('users')
+      .select('display_name, location')
+      .eq('user_id', userId)
+      .single();
+    const row = data as { display_name: string; location: string } | null;
+    return { display_name: row?.display_name ?? 'ユーザー', location: row?.location ?? 'Tokyo' };
+  } catch {
+    return { display_name: 'ユーザー', location: 'Tokyo' };
+  }
 }

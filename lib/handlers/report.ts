@@ -225,9 +225,14 @@ export async function getCheckReminders(userId: string): Promise<string> {
 
 export async function runBackgroundReminders(userId: string): Promise<void> {
   const now = new Date();
-  await Promise.all([
-    checkScheduleReminders(userId, now),
-    checkTaskReminders(userId, now),
+  // 個別の失敗が全体を止めないよう allSettled で実行
+  await Promise.allSettled([
+    checkScheduleReminders(userId, now).catch((e) =>
+      console.error('[schedule reminder error]', e)
+    ),
+    checkTaskReminders(userId, now).catch((e) =>
+      console.error('[task reminder error]', e)
+    ),
   ]);
 }
 

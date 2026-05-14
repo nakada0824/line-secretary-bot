@@ -7,6 +7,7 @@ import { runBackgroundReminders } from '@/lib/handlers/report';
 import { LineEvent } from '@/types';
 
 export const runtime = 'nodejs';
+export const maxDuration = 30;
 
 export async function POST(request: NextRequest): Promise<Response> {
   const body = await request.text();
@@ -71,15 +72,17 @@ async function processEvent(event: LineEvent): Promise<void> {
     const intentResult = await detectIntent(userMessage, history);
     const response = await handleIntent(userId, intentResult, userMessage, history);
 
-    // 全操作を並列実行：返信・会話保存・リマインダーチェック
-    await Promise.all([
-      replyMessage(replyToken, [textMessage(response)]),
+    // 返信を最優先で送信
+    await replyMessage(replyToken, [textMessage(response)]);
+
+    // 返信後に非同期で副作用タスクを実行（失敗しても返信には影響しない）
+    Promise.allSettled([
       saveConversation(userId, 'user', userMessage),
       saveConversation(userId, 'assistant', response),
       runBackgroundReminders(userId),
-    ]);
+    ]).catch((err) => console.error('[background tasks error]', err));
   } catch (err) {
-    console.error('processEvent error:', err);
+    console.error('[processEvent error]', err instanceof Error ? err.message : err);
     try {
       await replyMessage(replyToken, [
         textMessage('すみません、エラーが発生しました 🙇\nもう一度試してください。'),
