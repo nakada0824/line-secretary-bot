@@ -1,8 +1,20 @@
 import { supabase, getUserDisplayName, getUser } from '@/lib/supabase';
 import { pushMessage, textMessage } from '@/lib/line';
-import { generateMorningMessage, generateEveningMessage, generateWeeklySummary } from '@/lib/claude';
+import { generateMorningOneLiner, generateEveningMessage, generateWeeklySummary } from '@/lib/claude';
 import { getWeather, formatWeather } from '@/lib/weather';
 import { Schedule, Task, Habit, Birthday } from '@/types';
+
+const PRIORITY_LABEL: Record<number, string> = { 1: '最低', 2: '低', 3: '中', 4: '高', 5: '最高' };
+
+function fmtTime(iso: string) {
+  return new Date(iso).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' });
+}
+
+function fmtDateShort(iso: string) {
+  const d = new Date(new Date(iso).toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+  const weekday = ['日', '月', '火', '水', '木', '金', '土'][d.getDay()];
+  return `${d.getMonth() + 1}/${d.getDate()}(${weekday})`;
+}
 
 function jstNow() {
   return new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
@@ -11,66 +23,155 @@ function jstNow() {
 // ───────────────────────────── 朝のレポート（「おはよう」トリガー）─────────────────────────────
 
 export async function getMorningReport(userId: string): Promise<string> {
+  const user = await getUser(userId);
   const now = jstNow();
-  const todayStart = new Date(now);
-  todayStart.setHours(0, 0, 0, 0);
-  const todayEnd = new Date(now);
-  todayEnd.setHours(23, 59, 59, 999);
-  const in7days = new Date(now);
-  in7days.setDate(in7days.getDate() + 7);
 
-  const [user, schedulesRes, tasksRes, birthdaysRes, weather] = await Promise.all([
-    getUser(userId),
-    supabase
-      .from('schedules')
-      .select('title, start_time, location')
+  const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
+  const todayEnd   = new Date(now); todayEnd.setHours(23, 59, 59, 999);
+  const weekEnd    = new Date(now); weekEnd.setDate(weekEnd.getDate() + 7); weekEnd.setHours(23, 59, 59, 999);
+  const monthEnd   = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+  const [
+    todaySchedRes, weekSchedRes, monthSchedRes,
+    todayTaskRes, weekTaskRes,
+    birthdaysRes, weather, oneLiner,
+  ] = await Promise.all([
+    // 今日の予定
+    supabase.from('schedules').select('title, start_time, location')
       .eq('user_id', userId)
       .gte('start_time', todayStart.toISOString())
       .lte('start_time', todayEnd.toISOString())
-      .order('start_time', { ascending: true }),
-    supabase
-      .from('tasks')
-      .select('title, priority, deadline')
+      .order('start_time'),
+    // 今週の予定（明日〜7日後）
+    supabase.from('schedules').select('title, start_time, location')
       .eq('user_id', userId)
-      .eq('completed', false)
+      .gt('start_time', todayEnd.toISOString())
+      .lte('start_time', weekEnd.toISOString())
+      .order('start_time'),
+    // 今月の予定（7日後〜月末）
+    supabase.from('schedules').select('title, start_time')
+      .eq('user_id', userId)
+      .gt('start_time', weekEnd.toISOString())
+      .lte('start_time', monthEnd.toISOString())
+      .order('start_time'),
+    // 今日締め切りのタスク
+    supabase.from('tasks').select('title, priority, deadline')
+      .eq('user_id', userId).eq('completed', false)
       .not('deadline', 'is', null)
-      .lte('deadline', in7days.toISOString())
-      .order('deadline', { ascending: true })
-      .limit(5),
+      .lte('deadline', todayEnd.toISOString())
+      .order('priority', { ascending: false }),
+    // 今週締め切りのタスク（今日を除く）
+    supabase.from('tasks').select('title, priority, deadline')
+      .eq('user_id', userId).eq('completed', false)
+      .not('deadline', 'is', null)
+      .gt('deadline', todayEnd.toISOString())
+      .lte('deadline', weekEnd.toISOString())
+      .order('deadline'),
     supabase.from('birthdays').select('name, birth_date').eq('user_id', userId),
-    getWeather('Tokyo'),
+    getWeather(user.location || 'Tokyo'),
+    generateMorningOneLiner(user.display_name),
   ]);
 
-  const schedules = (schedulesRes.data ?? []) as Schedule[];
-  const tasks = (tasksRes.data ?? []) as Task[];
+  const todayScheds = (todaySchedRes.data ?? []) as Schedule[];
+  const weekScheds  = (weekSchedRes.data  ?? []) as Schedule[];
+  const monthScheds = (monthSchedRes.data ?? []) as Schedule[];
+  const todayTasks  = (todayTaskRes.data  ?? []) as Task[];
+  const weekTasks   = (weekTaskRes.data   ?? []) as Task[];
 
-  // 誕生日チェック
-  const birthdayLines: string[] = [];
-  for (const b of (birthdaysRes.data ?? []) as Birthday[]) {
-    const bd = new Date(b.birth_date);
-    const isToday = bd.getMonth() === now.getMonth() && bd.getDate() === now.getDate();
-    if (isToday) {
-      birthdayLines.push(`🎂 今日は${b.name}さんの誕生日です！お祝いを忘れずに！`);
-    } else {
-      const bdThisYear = new Date(now.getFullYear(), bd.getMonth(), bd.getDate());
-      const in7d = new Date(now);
-      in7d.setDate(in7d.getDate() + 7);
-      if (bdThisYear > now && bdThisYear <= in7d) {
-        const days = Math.ceil((bdThisYear.getTime() - now.getTime()) / 86400000);
-        birthdayLines.push(`🎂 ${b.name}さんの誕生日まであと${days}日です！`);
+  const lines: string[] = [];
+
+  // ヘッダー
+  const dateLabel = now.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
+  lines.push(`おはようございます、${user.display_name}さん！🌅`);
+  lines.push(dateLabel);
+
+  // ── 今日の予定 ──
+  lines.push('');
+  lines.push('━━━ 📅 今日の予定 ━━━');
+  if (todayScheds.length === 0) {
+    lines.push('（予定なし）');
+  } else {
+    for (const s of todayScheds) {
+      lines.push(`・${fmtTime(s.start_time)} ${s.title}${s.location ? `（${s.location}）` : ''}`);
+    }
+  }
+
+  // ── 今週の予定 ──
+  lines.push('');
+  lines.push('━━━ 📆 今週の予定 ━━━');
+  if (weekScheds.length === 0) {
+    lines.push('（予定なし）');
+  } else {
+    for (const s of weekScheds) {
+      lines.push(`・${fmtDateShort(s.start_time)} ${fmtTime(s.start_time)} ${s.title}${s.location ? `（${s.location}）` : ''}`);
+    }
+  }
+
+  // ── 今月の予定 ──
+  lines.push('');
+  lines.push('━━━ 🗓️ 今月の予定 ━━━');
+  if (monthScheds.length === 0) {
+    lines.push('（予定なし）');
+  } else {
+    for (const s of monthScheds.slice(0, 10)) {
+      lines.push(`・${fmtDateShort(s.start_time)} ${s.title}`);
+    }
+    if (monthScheds.length > 10) lines.push(`  他${monthScheds.length - 10}件…`);
+  }
+
+  // ── 期限が近いタスク ──
+  if (todayTasks.length > 0 || weekTasks.length > 0) {
+    lines.push('');
+    lines.push('━━━ ✅ 期限が近いタスク ━━━');
+    if (todayTasks.length > 0) {
+      lines.push('🔴 今日まで');
+      for (const t of todayTasks) {
+        lines.push(`・${t.title} [優先度: ${PRIORITY_LABEL[t.priority] ?? '中'}]`);
+      }
+    }
+    if (weekTasks.length > 0) {
+      if (todayTasks.length > 0) lines.push('');
+      lines.push('📌 今週まで');
+      for (const t of weekTasks) {
+        const dl = t.deadline
+          ? new Date(t.deadline).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric', timeZone: 'Asia/Tokyo' })
+          : '';
+        lines.push(`・${t.title}${dl ? ` [${dl}締め]` : ''}`);
       }
     }
   }
 
-  const weatherText = formatWeather(weather);
-  const message = await generateMorningMessage({
-    displayName: user.display_name,
-    schedules,
-    tasks,
-    weather: weatherText,
-  });
+  // ── 天気・傘アラート ──
+  lines.push('');
+  lines.push('━━━ 🌤️ 天気・傘アラート ━━━');
+  lines.push(formatWeather(weather));
 
-  return birthdayLines.length > 0 ? `${message}\n\n${birthdayLines.join('\n')}` : message;
+  // ── 誕生日 ──
+  const birthdayLines: string[] = [];
+  for (const b of (birthdaysRes.data ?? []) as Birthday[]) {
+    const bd = new Date(b.birth_date);
+    if (bd.getMonth() === now.getMonth() && bd.getDate() === now.getDate()) {
+      birthdayLines.push(`🎂 今日は${b.name}さんの誕生日です！お祝いを忘れずに！`);
+    } else {
+      const bdThisYear = new Date(now.getFullYear(), bd.getMonth(), bd.getDate());
+      if (bdThisYear > now && bdThisYear <= weekEnd) {
+        const days = Math.ceil((bdThisYear.getTime() - now.getTime()) / 86400000);
+        birthdayLines.push(`🎂 ${b.name}さんの誕生日まであと${days}日！`);
+      }
+    }
+  }
+  if (birthdayLines.length > 0) {
+    lines.push('');
+    lines.push('━━━ 🎂 誕生日 ━━━');
+    lines.push(...birthdayLines);
+  }
+
+  // ── 一言メッセージ ──
+  lines.push('');
+  lines.push('━━━ 💬 一言 ━━━');
+  lines.push(oneLiner);
+
+  return lines.join('\n');
 }
 
 // ───────────────────────────── 夜の振り返りレポート ─────────────────────────────
