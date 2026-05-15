@@ -19,17 +19,40 @@ describe('SUMMARIZE_URL', () => {
   test('URL + 読んで', () => expect(rule('このURL読んで https://zenn.dev/...')).toBe('SUMMARIZE_URL'));
 });
 
+// ─────────────────────────── 即時返答（Claude API不要） ─────────────
+describe('INSTANT_REPLY', () => {
+  test('おはよう → INSTANT_REPLY',       () => expect(rule('おはよう')).toBe('INSTANT_REPLY'));
+  test('おはようございます → INSTANT_REPLY', () => expect(rule('おはようございます')).toBe('INSTANT_REPLY'));
+  test('おやすみ → INSTANT_REPLY',       () => expect(rule('おやすみ')).toBe('INSTANT_REPLY'));
+  test('おやすみなさい → INSTANT_REPLY', () => expect(rule('おやすみなさい')).toBe('INSTANT_REPLY'));
+  test('ありがとう',      () => expect(rule('ありがとう')).toBe('INSTANT_REPLY'));
+  test('ありがとうございます', () => expect(rule('ありがとうございます')).toBe('INSTANT_REPLY'));
+  test('了解',           () => expect(rule('了解')).toBe('INSTANT_REPLY'));
+  test('疲れた',         () => expect(rule('疲れた')).toBe('INSTANT_REPLY'));
+  test('暇',             () => expect(rule('暇')).toBe('INSTANT_REPLY'));
+  test('ただいま',       () => expect(rule('ただいま')).toBe('INSTANT_REPLY'));
+  test('こんにちは',     () => expect(rule('こんにちは')).toBe('INSTANT_REPLY'));
+  test('お疲れ様',       () => expect(rule('お疲れ様')).toBe('INSTANT_REPLY'));
+
+  // 末尾記号付きでもマッチ
+  test('ありがとう！', () => expect(rule('ありがとう！')).toBe('INSTANT_REPLY'));
+
+  // 複合文はマッチしない（Claude へ）
+  test('おはようございます！今日は何かある？ → null',
+    () => expect(rule('おはようございます！今日は何かある？')).toBeNull());
+});
+
 // ─────────────────────────── 朝・夜レポート ──────────────────────
 describe('MORNING_REPORT', () => {
-  test('おはよう', () => expect(rule('おはよう')).toBe('MORNING_REPORT'));
-  test('おはようございます', () => expect(rule('おはようございます')).toBe('MORNING_REPORT'));
-  test('朝のレポート', () => expect(rule('朝のレポート')).toBe('MORNING_REPORT'));
+  // おはよう系はINSTANT_REPLYに移行（明示的なコマンドのみ）
+  test('朝のレポート',   () => expect(rule('朝のレポート')).toBe('MORNING_REPORT'));
+  test('モーニングレポート', () => expect(rule('モーニングレポート')).toBe('MORNING_REPORT'));
 });
 
 describe('EVENING_REPORT', () => {
-  test('おやすみ', () => expect(rule('おやすみ')).toBe('EVENING_REPORT'));
-  test('おやすみなさい', () => expect(rule('おやすみなさい')).toBe('EVENING_REPORT'));
+  // おやすみ系はINSTANT_REPLYに移行（明示的なコマンドのみ）
   test('今日の振り返り', () => expect(rule('今日の振り返り')).toBe('EVENING_REPORT'));
+  test('夜のレポート',   () => expect(rule('夜のレポート')).toBe('EVENING_REPORT'));
 });
 
 describe('WEEKLY_SUMMARY', () => {

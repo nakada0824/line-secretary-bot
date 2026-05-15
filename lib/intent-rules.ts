@@ -7,6 +7,66 @@ import type { IntentResult } from '@/types';
 // 日本語の疑問・依頼末尾表現
 const ASK = /[はがをにで]?(教えて|見せて|確認|一覧|リスト|ある[かな？?]?|どう[？?]?|何[？?]?|は[？?]|を?見たい|調べて|知りたい)/;
 
+// ── 即時返答（Claude API不要・0コスト） ────────────────────────────────────────
+function reply(text: string): IntentResult {
+  return { intent: 'INSTANT_REPLY', data: { text } };
+}
+
+function tryInstantReply(m: string): IntentResult | null {
+  // 末尾の記号・空白を除去して純粋なキーワードを取り出す
+  const s = m.replace(/[!！？。〜～♪\s]+$/, '');
+
+  // 朝の挨拶
+  if (/^(おはよう(ございます)?|グッドモーニング)$/.test(s))
+    return reply('おはようございます、中田さん！☀️ 今日も一日よろしくお願いします！');
+
+  // 夜の挨拶
+  if (/^(おやすみ(なさい)?|グッドナイト)$/.test(s))
+    return reply('おやすみなさい、中田さん！🌙 ゆっくり休んでくださいね。');
+
+  // 感謝
+  if (/^(ありがとう(ございます)?|ありがとね|サンキュー|thanks)$/i.test(s))
+    return reply('どういたしまして！😊');
+
+  // 了解・確認
+  if (/^(了解(です|しました)?|わかった|わかりました|オッケー|ok|OK|ラジャー)$/i.test(s))
+    return reply('了解です✨');
+
+  // 疲れた
+  if (/^(疲れた|つかれた|疲れました)$/.test(s))
+    return reply('お疲れさまです！😊 今日もよく頑張りましたね。ゆっくり休んでください。');
+
+  // 暇
+  if (/^(暇|ひま|暇だ(な)?|暇です)$/.test(s))
+    return reply('のんびりできていいですね☺️ 何かお手伝いできることありますか？');
+
+  // ただいま
+  if (/^(ただいま(です)?)$/.test(s))
+    return reply('おかえりなさい、中田さん！今日もお疲れさまでした☺️');
+
+  // こんにちは
+  if (/^(こんにちは|こんにちわ|hello|hi)$/i.test(s))
+    return reply('こんにちは、中田さん！😊 何かお手伝いできることありますか？');
+
+  // こんばんは
+  if (/^(こんばんは|こんばんわ)$/.test(s))
+    return reply('こんばんは、中田さん！🌙 今日はいかがでしたか？');
+
+  // お疲れ様
+  if (/^(お疲れ(様|さま|さん)?(です|でした)?|お疲れ)$/.test(s))
+    return reply('お疲れさまです！今日もよく頑張りましたね😊');
+
+  // よろしく
+  if (/^(よろしく(お願い(します|いたします)?)?|よろしくね)$/.test(s))
+    return reply('こちらこそよろしくお願いします！😊');
+
+  // はーい・はい系
+  if (/^(はーい|はい(です)?|うん|そうです)$/.test(s))
+    return reply('はい！何かありますか？😊');
+
+  return null;
+}
+
 // ── Webアプリ起動 ──────────────────────────────────────────────────────────────
 const BASE = 'https://secretary-app-bay.vercel.app';
 
@@ -34,11 +94,13 @@ function tryTranslate(m: string): IntentResult | null {
   return null; // 詳細パースは Claude に委ねる
 }
 
-// ── あいさつ系レポート ────────────────────────────────────────────────────────
+// ── レポート系（明示的なコマンドのみ） ───────────────────────────────────────
 function tryGreeting(m: string): IntentResult | null {
-  if (/^(おはよう|おはようございます|グッドモーニング|朝のレポート)[!！。\s]*$/.test(m))
+  // 「朝のレポート」「モーニングレポート」など明示的な指示のみ
+  if (/^(朝のレポート|モーニングレポート|今日のレポート)[!！。\s]*$/.test(m))
     return { intent: 'MORNING_REPORT', data: {} };
-  if (/^(おやすみ|おやすみなさい|グッドナイト|夜のレポート|今日の振り返り)[!！。\s]*$/.test(m))
+  // 夜のレポート（今日の振り返りも含む）
+  if (/^(夜のレポート|ナイトレポート|今日の振り返り)[!！。\s]*$/.test(m))
     return { intent: 'EVENING_REPORT', data: {} };
   if (/週次サマリー|今週の振り返り|週報/.test(m))
     return { intent: 'WEEKLY_SUMMARY', data: {} };
@@ -161,6 +223,7 @@ export function detectByRules(message: string): IntentResult | null {
   const m = message.trim();
 
   return (
+    tryInstantReply(m) ??
     tryOpenWebApp(m) ??
     tryUrl(m) ??
     tryGreeting(m) ??

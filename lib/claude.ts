@@ -276,6 +276,17 @@ async function searchWithWebSearch(userPrompt: string, fallback: string): Promis
   return fallback;
 }
 
+// web_search を使わない軽量 Claude 呼び出し（エンタメ・レシピ等、学習済み知識で十分な場合）
+async function askClaude(prompt: string, fallback: string): Promise<string> {
+  const response = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: 1024,
+    system: CHARACTER,
+    messages: [{ role: 'user', content: prompt }],
+  });
+  return response.content[0].type === 'text' ? response.content[0].text : fallback;
+}
+
 export async function searchWithClaude(query: string): Promise<string> {
   return searchWithWebSearch(
     `以下の質問をウェブで検索して、LINE向けに絵文字・箇条書きで読みやすく日本語でまとめてください（400字以内）。\n\n質問: ${query}`,
@@ -350,14 +361,15 @@ export async function searchEntertainmentWithClaude(params: {
   genre?: string;
   keywords?: string;
 }): Promise<string> {
+  // 学習済み知識で十分なため web_search 不要
   const parts = [
     params.type || 'エンタメ作品',
     params.genre ? `ジャンル: ${params.genre}` : '',
     params.keywords || '',
   ].filter(Boolean).join('、');
-  return searchWithWebSearch(
-    `${parts}のおすすめ作品をウェブで検索して、3〜5件を絵文字付きでLINE向けに日本語でまとめてください（400字以内）。あらすじや見どころも含めてください。`,
-    'エンタメ情報を取得できませんでした。'
+  return askClaude(
+    `${parts}のおすすめ作品を3〜5件、絵文字付きでLINE向けに日本語でまとめてください（400字以内）。あらすじや見どころも含めてください。`,
+    'エンタメ情報をお伝えできませんでした。'
   );
 }
 
@@ -365,10 +377,11 @@ export async function searchRecipeWithClaude(params: {
   dish: string;
   keywords?: string;
 }): Promise<string> {
+  // レシピは学習済み知識で十分なため web_search 不要
   const query = [params.dish, params.keywords].filter(Boolean).join(' ');
-  return searchWithWebSearch(
-    `「${query}」のレシピをウェブで検索して、材料と調理手順のポイントを絵文字付きでLINE向けに日本語でまとめてください（400字以内）。`,
-    'レシピを見つけられませんでした。'
+  return askClaude(
+    `「${query}」のレシピを、材料と調理手順のポイントを絵文字付きでLINE向けに日本語でまとめてください（400字以内）。`,
+    'レシピをお伝えできませんでした。'
   );
 }
 

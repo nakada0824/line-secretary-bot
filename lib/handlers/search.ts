@@ -1,7 +1,6 @@
 import {
   searchWithClaude,
   searchRestaurantWithClaude,
-  searchWeatherWithClaude,
   searchOutingWithClaude,
   searchNewsWithClaude,
   searchEntertainmentWithClaude,
@@ -9,6 +8,7 @@ import {
   summarizeUrlWithClaude,
   translateWithClaude,
 } from '@/lib/claude';
+import { getWeather, formatWeather } from '@/lib/weather';
 
 export async function searchQuery(query: string): Promise<string> {
   if (!query) return '調べたいことを教えてください。\n\n例：「東京タワーの高さ調べて」';
@@ -25,7 +25,10 @@ export async function searchRestaurant(data: Record<string, unknown>): Promise<s
 }
 
 export async function searchWeather(query: string): Promise<string> {
-  return searchWeatherWithClaude(query);
+  // wttr.in API を直接呼び出す（web_search 不要・高速）
+  const location = query || '東京';
+  const weather = await getWeather(location);
+  return formatWeather(weather);
 }
 
 export async function searchOuting(data: Record<string, unknown>): Promise<string> {

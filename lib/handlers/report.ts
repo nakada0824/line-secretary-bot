@@ -1,7 +1,22 @@
 import { supabase, getUserDisplayName, getUser } from '@/lib/supabase';
 import { pushMessage, textMessage } from '@/lib/line';
-import { generateMorningOneLiner, generateEveningMessage, generateWeeklySummary } from '@/lib/claude';
+import { generateEveningMessage, generateWeeklySummary } from '@/lib/claude';
 import { Schedule, Task, ShoppingItem, Habit } from '@/types';
+
+// 朝の一言（Claude API不要・曜日ベースでローテーション）
+const MORNING_ONE_LINERS = [
+  '今日も一日よろしくお願いします！💪',       // 日
+  '今週もいいスタートが切れそうですね✨',       // 月
+  '順調に進んでいますよ、頑張りましょう！😊',  // 火
+  '折り返し地点です。引き続き頑張って！☀️',    // 水
+  'もう少しで週末ですね。ラストスパートです！', // 木
+  '今週もよく頑張りました！あと一日☺️',        // 金
+  'お休みの日もゆっくり充電してくださいね🌿',  // 土
+];
+
+function pickOneLiner(): string {
+  return MORNING_ONE_LINERS[new Date().getDay()];
+}
 
 const PRIORITY_LABEL: Record<number, string> = { 1: '最低', 2: '低', 3: '中', 4: '高', 5: '最高' };
 
@@ -42,7 +57,6 @@ export async function getMorningReport(userId: string): Promise<string> {
     weekTaskRes,
     importantTaskRes,
     shoppingRes,
-    oneLiner,
   ] = await Promise.all([
     // 今日の予定（時間順）
     supabase.from('schedules').select('id, title, start_time, location')
@@ -78,7 +92,6 @@ export async function getMorningReport(userId: string): Promise<string> {
     supabase.from('shopping_list').select('item, quantity')
       .eq('user_id', userId).eq('checked', false)
       .order('created_at', { ascending: true }),
-    generateMorningOneLiner(user.display_name),
   ]);
 
   const todayScheds    = (todaySchedRes.data    ?? []) as Schedule[];
@@ -175,7 +188,7 @@ export async function getMorningReport(userId: string): Promise<string> {
   // ── 一言 ──
   lines.push('');
   lines.push('━━━ 💬 一言 ━━━');
-  lines.push(oneLiner);
+  lines.push(pickOneLiner());
 
   return lines.join('\n');
 }

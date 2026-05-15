@@ -33,6 +33,7 @@ export type Intent =
   | 'WEEKLY_SUMMARY'
   | 'CHECK_REMINDERS'
   | 'OPEN_WEB_APP'
+  | 'INSTANT_REPLY'
   | 'CHAT';
 
 export interface IntentResult {

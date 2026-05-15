@@ -76,6 +76,8 @@ export async function handleIntent(
       return shopping.addConsumable(userId, data);
     case 'GET_CONSUMABLES':
       return shopping.getConsumables(userId);
+    case 'INSTANT_REPLY':
+      return data.text as string;
     case 'OPEN_WEB_APP': {
       const { url, label } = data as { url: string; label: string };
       return `${label}はこちらからどうぞ✨\n${url}`;
