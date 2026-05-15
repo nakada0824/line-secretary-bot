@@ -21,8 +21,6 @@ describe('INSTANT_REPLY', () => {
   test('ありがとう',      () => expect(rule('ありがとう')).toBe('INSTANT_REPLY'));
   test('ありがとうございます', () => expect(rule('ありがとうございます')).toBe('INSTANT_REPLY'));
   test('了解',           () => expect(rule('了解')).toBe('INSTANT_REPLY'));
-  test('疲れた',         () => expect(rule('疲れた')).toBe('INSTANT_REPLY'));
-  test('暇',             () => expect(rule('暇')).toBe('INSTANT_REPLY'));
   test('ただいま',       () => expect(rule('ただいま')).toBe('INSTANT_REPLY'));
   test('こんにちは',     () => expect(rule('こんにちは')).toBe('INSTANT_REPLY'));
   test('お疲れ様',       () => expect(rule('お疲れ様')).toBe('INSTANT_REPLY'));
@@ -101,6 +99,8 @@ describe('GET_SHOPPING', () => {
 describe('Claude委ねケース（null を返す）', () => {
   test('明日14時に会議',     () => expect(rule('明日14時に会議')).toBeNull());
   test('資料作成 優先度5',   () => expect(rule('資料作成 優先度5 締め切り金曜')).toBeNull());
+  test('疲れた → null（Claude で共感対応）', () => expect(rule('疲れた')).toBeNull());
+  test('暇 → null（Claude で自然対応）',     () => expect(rule('暇')).toBeNull());
   test('おはようございます！今日は何かある？',
     () => expect(rule('おはようございます！今日は何かある？')).toBeNull());
 });
