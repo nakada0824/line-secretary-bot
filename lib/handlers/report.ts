@@ -1,8 +1,7 @@
 import { supabase, getUserDisplayName, getUser } from '@/lib/supabase';
 import { pushMessage, textMessage } from '@/lib/line';
 import { generateMorningOneLiner, generateEveningMessage, generateWeeklySummary } from '@/lib/claude';
-import { getWeather, formatWeather } from '@/lib/weather';
-import { Schedule, Task, Habit, Birthday } from '@/types';
+import { Schedule, Task, ShoppingItem, Habit } from '@/types';
 
 const PRIORITY_LABEL: Record<number, string> = { 1: '最低', 2: '低', 3: '中', 4: '高', 5: '最高' };
 
@@ -28,61 +27,81 @@ export async function getMorningReport(userId: string): Promise<string> {
 
   const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
   const todayEnd   = new Date(now); todayEnd.setHours(23, 59, 59, 999);
-  const weekEnd    = new Date(now); weekEnd.setDate(weekEnd.getDate() + 7); weekEnd.setHours(23, 59, 59, 999);
-  const monthEnd   = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+  // 今週末（日曜）23:59:59 を計算（月〜日を1週間とする）
+  const dow = now.getDay(); // 0=日, 1=月, ..., 6=土
+  const daysUntilSunday = dow === 0 ? 0 : 7 - dow;
+  const weekEnd = new Date(now);
+  weekEnd.setDate(weekEnd.getDate() + daysUntilSunday);
+  weekEnd.setHours(23, 59, 59, 999);
 
   const [
-    todaySchedRes, weekSchedRes, monthSchedRes,
-    todayTaskRes, weekTaskRes,
-    birthdaysRes, weather, oneLiner,
+    todaySchedRes,
+    weekSchedRes,
+    todayTaskRes,
+    weekTaskRes,
+    importantTaskRes,
+    shoppingRes,
+    oneLiner,
   ] = await Promise.all([
-    // 今日の予定
-    supabase.from('schedules').select('title, start_time, location')
+    // 今日の予定（時間順）
+    supabase.from('schedules').select('id, title, start_time, location')
       .eq('user_id', userId)
       .gte('start_time', todayStart.toISOString())
       .lte('start_time', todayEnd.toISOString())
       .order('start_time'),
-    // 今週の予定（明日〜7日後）
-    supabase.from('schedules').select('title, start_time, location')
+    // 今週残りの予定（明日〜今週末）
+    supabase.from('schedules').select('id, title, start_time, location')
       .eq('user_id', userId)
       .gt('start_time', todayEnd.toISOString())
       .lte('start_time', weekEnd.toISOString())
       .order('start_time'),
-    // 今月の予定（7日後〜月末）
-    supabase.from('schedules').select('title, start_time')
-      .eq('user_id', userId)
-      .gt('start_time', weekEnd.toISOString())
-      .lte('start_time', monthEnd.toISOString())
-      .order('start_time'),
     // 今日締め切りのタスク
-    supabase.from('tasks').select('title, priority, deadline')
+    supabase.from('tasks').select('id, title, priority, deadline')
       .eq('user_id', userId).eq('completed', false)
       .not('deadline', 'is', null)
       .lte('deadline', todayEnd.toISOString())
       .order('priority', { ascending: false }),
-    // 今週締め切りのタスク（今日を除く）
-    supabase.from('tasks').select('title, priority, deadline')
+    // 今週締め切りのタスク（明日〜今週末）
+    supabase.from('tasks').select('id, title, priority, deadline')
       .eq('user_id', userId).eq('completed', false)
       .not('deadline', 'is', null)
       .gt('deadline', todayEnd.toISOString())
       .lte('deadline', weekEnd.toISOString())
       .order('deadline'),
-    supabase.from('birthdays').select('name, birth_date').eq('user_id', userId),
-    getWeather(user.location || 'Tokyo'),
+    // 優先度4〜5の重要タスク
+    supabase.from('tasks').select('id, title, priority, deadline')
+      .eq('user_id', userId).eq('completed', false)
+      .gte('priority', 4)
+      .order('priority', { ascending: false }),
+    // 未購入の買い物リスト
+    supabase.from('shopping_list').select('item, quantity')
+      .eq('user_id', userId).eq('checked', false)
+      .order('created_at', { ascending: true }),
     generateMorningOneLiner(user.display_name),
   ]);
 
-  const todayScheds = (todaySchedRes.data ?? []) as Schedule[];
-  const weekScheds  = (weekSchedRes.data  ?? []) as Schedule[];
-  const monthScheds = (monthSchedRes.data ?? []) as Schedule[];
-  const todayTasks  = (todayTaskRes.data  ?? []) as Task[];
-  const weekTasks   = (weekTaskRes.data   ?? []) as Task[];
+  const todayScheds    = (todaySchedRes.data    ?? []) as Schedule[];
+  const weekScheds     = (weekSchedRes.data     ?? []) as Schedule[];
+  const todayTasks     = (todayTaskRes.data     ?? []) as Task[];
+  const weekTasks      = (weekTaskRes.data      ?? []) as Task[];
+  const importantTasks = (importantTaskRes.data ?? []) as Task[];
+  const shoppingItems  = (shoppingRes.data      ?? []) as ShoppingItem[];
+
+  // 今日・今週締め切りに既出のタスクIDを除外して重複を防ぐ
+  const shownTaskIds = new Set([
+    ...todayTasks.map((t) => t.id),
+    ...weekTasks.map((t) => t.id),
+  ]);
+  const topTasks = importantTasks.filter((t) => !shownTaskIds.has(t.id));
 
   const lines: string[] = [];
 
-  // ヘッダー
-  const dateLabel = now.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
-  lines.push(`おはようございます、${user.display_name}さん！🌅`);
+  // ── ヘッダー ──
+  const dateLabel = now.toLocaleDateString('ja-JP', {
+    year: 'numeric', month: 'long', day: 'numeric', weekday: 'long',
+  });
+  lines.push(`おはようございます、中田さん！☀️`);
   lines.push(dateLabel);
 
   // ── 今日の予定 ──
@@ -107,31 +126,22 @@ export async function getMorningReport(userId: string): Promise<string> {
     }
   }
 
-  // ── 今月の予定 ──
+  // ── タスク ──
   lines.push('');
-  lines.push('━━━ 🗓️ 今月の予定 ━━━');
-  if (monthScheds.length === 0) {
-    lines.push('（予定なし）');
-  } else {
-    for (const s of monthScheds.slice(0, 10)) {
-      lines.push(`・${fmtDateShort(s.start_time)} ${s.title}`);
-    }
-    if (monthScheds.length > 10) lines.push(`  他${monthScheds.length - 10}件…`);
-  }
+  lines.push('━━━ ✅ タスク ━━━');
 
-  // ── 期限が近いタスク ──
-  if (todayTasks.length > 0 || weekTasks.length > 0) {
-    lines.push('');
-    lines.push('━━━ ✅ 期限が近いタスク ━━━');
+  if (todayTasks.length === 0 && weekTasks.length === 0 && topTasks.length === 0) {
+    lines.push('（期限・重要タスクなし）');
+  } else {
     if (todayTasks.length > 0) {
-      lines.push('🔴 今日まで');
+      lines.push('🔴 今日期限');
       for (const t of todayTasks) {
         lines.push(`・${t.title} [優先度: ${PRIORITY_LABEL[t.priority] ?? '中'}]`);
       }
     }
     if (weekTasks.length > 0) {
       if (todayTasks.length > 0) lines.push('');
-      lines.push('📌 今週まで');
+      lines.push('📌 今週期限');
       for (const t of weekTasks) {
         const dl = t.deadline
           ? new Date(t.deadline).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric', timeZone: 'Asia/Tokyo' })
@@ -139,34 +149,30 @@ export async function getMorningReport(userId: string): Promise<string> {
         lines.push(`・${t.title}${dl ? ` [${dl}締め]` : ''}`);
       }
     }
-  }
-
-  // ── 天気・傘アラート ──
-  lines.push('');
-  lines.push('━━━ 🌤️ 天気・傘アラート ━━━');
-  lines.push(formatWeather(weather));
-
-  // ── 誕生日 ──
-  const birthdayLines: string[] = [];
-  for (const b of (birthdaysRes.data ?? []) as Birthday[]) {
-    const bd = new Date(b.birth_date);
-    if (bd.getMonth() === now.getMonth() && bd.getDate() === now.getDate()) {
-      birthdayLines.push(`🎂 今日は${b.name}さんの誕生日です！お祝いを忘れずに！`);
-    } else {
-      const bdThisYear = new Date(now.getFullYear(), bd.getMonth(), bd.getDate());
-      if (bdThisYear > now && bdThisYear <= weekEnd) {
-        const days = Math.ceil((bdThisYear.getTime() - now.getTime()) / 86400000);
-        birthdayLines.push(`🎂 ${b.name}さんの誕生日まであと${days}日！`);
+    if (topTasks.length > 0) {
+      if (todayTasks.length > 0 || weekTasks.length > 0) lines.push('');
+      lines.push('⭐ 重要タスク（優先度4以上）');
+      for (const t of topTasks) {
+        const dl = t.deadline
+          ? new Date(t.deadline).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric', timeZone: 'Asia/Tokyo' })
+          : '';
+        lines.push(`・${t.title} [優先度: ${PRIORITY_LABEL[t.priority] ?? '高'}${dl ? `、${dl}締め` : ''}]`);
       }
     }
   }
-  if (birthdayLines.length > 0) {
-    lines.push('');
-    lines.push('━━━ 🎂 誕生日 ━━━');
-    lines.push(...birthdayLines);
+
+  // ── 買い物・備品 ──
+  lines.push('');
+  lines.push('━━━ 🛒 買い物リスト ━━━');
+  if (shoppingItems.length === 0) {
+    lines.push('（なし）');
+  } else {
+    for (const item of shoppingItems) {
+      lines.push(`・${item.item}${item.quantity ? `（${item.quantity}）` : ''}`);
+    }
   }
 
-  // ── 一言メッセージ ──
+  // ── 一言 ──
   lines.push('');
   lines.push('━━━ 💬 一言 ━━━');
   lines.push(oneLiner);
