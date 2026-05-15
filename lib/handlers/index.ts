@@ -61,7 +61,13 @@ export async function handleIntent(
       return data.text as string;
     case 'OPEN_WEB_APP': {
       const { url, label } = data as { url: string; label: string };
-      return `${label}はこちらからどうぞ✨\n${url}`;
+      const phrases = [
+        `${label}はこちらからどうぞ✨`,
+        `はい、${label}はこちらです😊`,
+        `${label}を開きます！`,
+      ];
+      const phrase = phrases[Math.floor(Math.random() * phrases.length)];
+      return `${phrase}\n${url}`;
     }
     case 'MORNING_REPORT':
       return report.getMorningReport(userId);

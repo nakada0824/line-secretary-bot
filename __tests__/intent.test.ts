@@ -33,6 +33,36 @@ describe('INSTANT_REPLY', () => {
     () => expect(rule('おはようございます！今日は何かある？')).toBeNull());
 });
 
+// ─────────────────────────── Webアプリ起動 ───────────────────────
+describe('OPEN_WEB_APP', () => {
+  // カレンダー
+  test('カレンダー',         () => expect(rule('カレンダー')).toBe('OPEN_WEB_APP'));
+  test('カレンダー開いて',   () => expect(rule('カレンダー開いて')).toBe('OPEN_WEB_APP'));
+  test('予定見たい',         () => expect(rule('予定見たい')).toBe('OPEN_WEB_APP'));
+  // タスク
+  test('タスク',             () => expect(rule('タスク')).toBe('OPEN_WEB_APP'));
+  test('タスク見たい',       () => expect(rule('タスク見たい')).toBe('OPEN_WEB_APP'));
+  test('タスク一覧',         () => expect(rule('タスク一覧')).toBe('OPEN_WEB_APP'));
+  // 買い物
+  test('買い物',             () => expect(rule('買い物')).toBe('OPEN_WEB_APP'));
+  test('買い物リスト',       () => expect(rule('買い物リスト')).toBe('OPEN_WEB_APP'));
+  test('備品',               () => expect(rule('備品')).toBe('OPEN_WEB_APP'));
+  // メモ
+  test('メモ',               () => expect(rule('メモ')).toBe('OPEN_WEB_APP'));
+  test('メモ一覧',           () => expect(rule('メモ一覧')).toBe('OPEN_WEB_APP'));
+  test('アイデア見たい',     () => expect(rule('アイデア見たい')).toBe('OPEN_WEB_APP'));
+
+  // URL の確認
+  test('カレンダー → /calendar', () =>
+    expect(detectByRules('カレンダー')?.data.url).toBe('https://secretary-app-bay.vercel.app/calendar'));
+  test('タスク一覧 → /tasks', () =>
+    expect(detectByRules('タスク一覧')?.data.url).toBe('https://secretary-app-bay.vercel.app/tasks'));
+  test('買い物リスト → /shopping', () =>
+    expect(detectByRules('買い物リスト')?.data.url).toBe('https://secretary-app-bay.vercel.app/shopping'));
+  test('メモ → /memo', () =>
+    expect(detectByRules('メモ')?.data.url).toBe('https://secretary-app-bay.vercel.app/memo'));
+});
+
 // ─────────────────────────── 朝・夜レポート ──────────────────────
 describe('MORNING_REPORT', () => {
   // おはよう系はINSTANT_REPLYに移行（明示的なコマンドのみ）

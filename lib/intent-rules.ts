@@ -118,8 +118,10 @@ function tryOpenWebApp(m: string): IntentResult | null {
     return { intent: 'OPEN_WEB_APP', data: { url: `${BASE}/calendar`, label: 'カレンダー' } };
   if (/^(タスク|タスクを?見たい|タスク一覧)$/.test(s))
     return { intent: 'OPEN_WEB_APP', data: { url: `${BASE}/tasks`, label: 'タスク一覧' } };
-  if (/^(買い物リスト|備品|買い物(を?|が?)見たい)$/.test(s))
+  if (/^(買い物|買い物リスト|備品|買い物(を?|が?)見たい)$/.test(s))
     return { intent: 'OPEN_WEB_APP', data: { url: `${BASE}/shopping`, label: '買い物リスト' } };
+  if (/^(メモ|メモ一覧|アイデア見たい)$/.test(s))
+    return { intent: 'OPEN_WEB_APP', data: { url: `${BASE}/memo`, label: 'メモ一覧' } };
   return null;
 }
 
