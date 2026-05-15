@@ -7,6 +7,20 @@ import type { IntentResult } from '@/types';
 // 日本語の疑問・依頼末尾表現
 const ASK = /[はがをにで]?(教えて|見せて|確認|一覧|リスト|ある[かな？?]?|どう[？?]?|何[？?]?|は[？?]|を?見たい|調べて|知りたい)/;
 
+// ── Webアプリ起動 ──────────────────────────────────────────────────────────────
+const BASE = 'https://secretary-app-bay.vercel.app';
+
+function tryOpenWebApp(m: string): IntentResult | null {
+  const s = m.replace(/[！？。\s]+$/, '');
+  if (/^(カレンダー|カレンダーを?開いて|予定(を?|が?)見たい)$/.test(s))
+    return { intent: 'OPEN_WEB_APP', data: { url: `${BASE}/calendar`, label: 'カレンダー' } };
+  if (/^(タスク|タスクを?見たい|タスク一覧)$/.test(s))
+    return { intent: 'OPEN_WEB_APP', data: { url: `${BASE}/tasks`, label: 'タスク一覧' } };
+  if (/^(買い物リスト|備品|買い物(を?|が?)見たい)$/.test(s))
+    return { intent: 'OPEN_WEB_APP', data: { url: `${BASE}/shopping`, label: '買い物リスト' } };
+  return null;
+}
+
 // ── URL ──────────────────────────────────────────────────────────────────────
 function tryUrl(m: string): IntentResult | null {
   const urlMatch = m.match(/https?:\/\/[^\s]+/);
@@ -147,6 +161,7 @@ export function detectByRules(message: string): IntentResult | null {
   const m = message.trim();
 
   return (
+    tryOpenWebApp(m) ??
     tryUrl(m) ??
     tryGreeting(m) ??
     tryWeather(m) ??
