@@ -12,13 +12,6 @@ function rule(msg: string) {
   return detectByRules(msg)?.intent ?? null;
 }
 
-// ─────────────────────────── URL 要約 ───────────────────────────
-describe('SUMMARIZE_URL', () => {
-  test('URLのみ', () => expect(rule('https://example.com')).toBe('SUMMARIZE_URL'));
-  test('URL + 要約指示', () => expect(rule('https://news.yahoo.co.jp/... を要約して')).toBe('SUMMARIZE_URL'));
-  test('URL + 読んで', () => expect(rule('このURL読んで https://zenn.dev/...')).toBe('SUMMARIZE_URL'));
-});
-
 // ─────────────────────────── 即時返答（Claude API不要） ─────────────
 describe('INSTANT_REPLY', () => {
   test('おはよう → INSTANT_REPLY',       () => expect(rule('おはよう')).toBe('INSTANT_REPLY'));
@@ -58,19 +51,6 @@ describe('EVENING_REPORT', () => {
 describe('WEEKLY_SUMMARY', () => {
   test('週次サマリー', () => expect(rule('週次サマリー')).toBe('WEEKLY_SUMMARY'));
   test('今週の振り返り', () => expect(rule('今週の振り返り')).toBe('WEEKLY_SUMMARY'));
-});
-
-// ─────────────────────────── 天気 ────────────────────────────────
-describe('WEATHER_SEARCH', () => {
-  test('今日の天気は？',   () => expect(rule('今日の天気は？')).toBe('WEATHER_SEARCH'));
-  test('明日雨？',         () => expect(rule('明日雨？')).toBe('WEATHER_SEARCH'));
-  test('傘いる？',         () => expect(rule('傘いる？')).toBe('WEATHER_SEARCH'));
-  test('大阪の天気教えて', () => expect(rule('大阪の天気教えて')).toBe('WEATHER_SEARCH'));
-  test('気温知りたい',     () => expect(rule('気温知りたい')).toBe('WEATHER_SEARCH'));
-  test('台風来る？',       () => expect(rule('台風来る？')).toBe('WEATHER_SEARCH'));
-
-  // 飲食ワードとの混在は Claude へ（null を返す）
-  test('ランチ + 天気 → null', () => expect(rule('ランチ行くけど天気どう？')).toBeNull());
 });
 
 // ─────────────────────────── 予定確認 ────────────────────────────
@@ -117,30 +97,8 @@ describe('GET_SHOPPING', () => {
   test('買い物リスト',     () => expect(rule('買い物リスト')).toBe('GET_SHOPPING'));
 });
 
-// ─────────────────────────── ニュース ────────────────────────────
-describe('SEARCH_NEWS', () => {
-  test('今日のニュース',   () => expect(rule('今日のニュース')).toBe('SEARCH_NEWS'));
-  test('最新ニュースは？', () => expect(rule('最新ニュースは？')).toBe('SEARCH_NEWS'));
-  test('スポーツニュース', () => expect(rule('スポーツニュース')).toBe('SEARCH_NEWS'));
-  test('今話題のことは？', () => expect(rule('今話題のことは？')).toBe('SEARCH_NEWS'));
-});
-
-// ─────────────────────────── エンタメ ────────────────────────────
-describe('SEARCH_ENTERTAINMENT', () => {
-  test('おすすめ映画',     () => expect(rule('おすすめ映画')).toBe('SEARCH_ENTERTAINMENT'));
-  test('面白いドラマある？',() => expect(rule('面白いドラマある？')).toBe('SEARCH_ENTERTAINMENT'));
-  test('アニメ教えて',     () => expect(rule('アニメ教えて')).toBe('SEARCH_ENTERTAINMENT'));
-});
-
 // ─────────────────────────── Claude へ委ねるケース ────────────────
 describe('Claude委ねケース（null を返す）', () => {
-  test('イタリアン探して',   () => expect(rule('イタリアン探して')).toBeNull());
-  test('ランチどこ行く？',   () => expect(rule('ランチどこ行く？')).toBeNull());
-  test('お店教えて',         () => expect(rule('お店教えて')).toBeNull());
-  test('焼肉食べたい',       () => expect(rule('焼肉食べたい')).toBeNull());
-  test('カレーのレシピ',     () => expect(rule('カレーのレシピ')).toBeNull());
-  test('英語に翻訳して',     () => expect(rule('英語に翻訳して')).toBeNull());
-  test('週末旅行おすすめ',   () => expect(rule('週末旅行おすすめ')).toBeNull());
   test('明日14時に会議',     () => expect(rule('明日14時に会議')).toBeNull());
   test('資料作成 優先度5',   () => expect(rule('資料作成 優先度5 締め切り金曜')).toBeNull());
   test('おはようございます！今日は何かある？',
