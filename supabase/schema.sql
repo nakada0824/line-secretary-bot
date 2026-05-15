@@ -140,5 +140,31 @@ ALTER TABLE templates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE birthdays ENABLE ROW LEVEL SECURITY;
 ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
 
--- Service Role は全アクセス可（サーバーサイドから使用するため）
--- ※ SUPABASE_SERVICE_ROLE_KEY を使う場合はRLSをバイパスできる
+-- ── Row Level Security ポリシー ────────────────────────────────────────────────
+-- サーバーサイドは SUPABASE_SERVICE_ROLE_KEY を使用するため RLS をバイパスする。
+-- 以下のポリシーは anon / authenticated ロールからの直接アクセスを全て拒否し、
+-- 万が一 API キーが漏洩した場合でもデータを保護する。
+
+DO $$
+DECLARE
+  tbl TEXT;
+BEGIN
+  FOREACH tbl IN ARRAY ARRAY[
+    'users','schedules','tasks','shopping_list','consumables',
+    'habits','habit_logs','memos','templates','birthdays','conversations'
+  ]
+  LOOP
+    EXECUTE format(
+      'DROP POLICY IF EXISTS deny_all_public ON %I;
+       CREATE POLICY deny_all_public ON %I AS RESTRICTIVE
+         FOR ALL TO public USING (false) WITH CHECK (false);',
+      tbl, tbl
+    );
+  END LOOP;
+END $$;
+
+-- 確認クエリ（SQL Editor で実行して全テーブルに deny_all_public が付いているか検証）
+-- SELECT schemaname, tablename, policyname, permissive, roles, cmd
+-- FROM pg_policies
+-- WHERE schemaname = 'public'
+-- ORDER BY tablename;
