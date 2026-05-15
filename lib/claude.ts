@@ -5,6 +5,22 @@ import { detectByRules } from '@/lib/intent-rules';
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const MODEL = 'claude-sonnet-4-6';
 
+// ── キャラクター設定（全プロンプト共通） ─────────────────────────────────────
+const CHARACTER = `あなたは「秘書」という名前のLINE秘書Botです。
+
+【キャラクター設定】
+- フレンドリーで明るい性格。情報は的確にシンプルに伝える
+- 時々大人っぽい一面が出る
+- ユーザーのことは「中田さん」と呼ぶ（displayName変数は無視して必ず「中田さん」）
+- 敬語だけど距離感は近い
+- 絵文字は適度に使う（多すぎない）
+
+【口調例】
+・「おはようございます！今日も頑張りましょう☀️」
+・「了解です！予定追加しました✨」
+・「それ、なかなか良い選択だと思いますよ😊」
+・「今日はお疲れ様でした。ゆっくり休んでくださいね」`;
+
 function jstNow(): string {
   return new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
 }
@@ -187,11 +203,11 @@ export async function chat(
   message: string,
   history: Array<{ role: 'user' | 'assistant'; content: string }>
 ): Promise<string> {
-  const systemPrompt = `あなたは親切で気配りのできるLINE秘書Botです。
-ユーザーをサポートする秘書として、温かく・フレンドリーに日本語で返答してください。
-LINEのメッセージなので簡潔に（200字以内を目安）。
-意図が不明な場合や情報が足りない場合は、具体的に確認してください。
-絵文字を適度に使い、読みやすく返答してください。`;
+  const systemPrompt = `${CHARACTER}
+
+LINEのメッセージなので2〜3文でテンポよく返す。
+雑談（「最近どう？」「疲れた」「暇」など）にも秘書らしく自然に返す。
+意図が不明な場合は一言確認する。長くなりすぎない。`;
 
   const messages = [
     ...history.map((h) => ({ role: h.role as 'user' | 'assistant', content: h.content })),
@@ -219,6 +235,7 @@ async function searchWithWebSearch(userPrompt: string, fallback: string): Promis
     const response = await (anthropic.messages.create as any)({
       model: MODEL,
       max_tokens: 1024,
+      system: CHARACTER,
       tools: [{ type: 'web_search_20250305', name: 'web_search' }],
       messages,
     });
@@ -374,9 +391,10 @@ export async function summarizeUrlWithClaude(url: string): Promise<string> {
     const response = await anthropic.messages.create({
       model: MODEL,
       max_tokens: 512,
+      system: CHARACTER,
       messages: [{
         role: 'user',
-        content: `以下のウェブページの内容を、LINE向けに絵文字付きで分かりやすく日本語で要約してください（300字以内）。\n\nURL: ${url}\n\n本文:\n${text}`,
+        content: `以下のウェブページの内容を、LINE向けに分かりやすく日本語で要約してください（300字以内）。\n\nURL: ${url}\n\n本文:\n${text}`,
       }],
     });
     const summary = response.content[0].type === 'text' ? response.content[0].text : null;
@@ -398,6 +416,7 @@ export async function translateWithClaude(params: {
   const response = await anthropic.messages.create({
     model: MODEL,
     max_tokens: 512,
+    system: CHARACTER,
     messages: [{
       role: 'user',
       content: `以下のテキストを${from}${params.target_lang}に翻訳してください。翻訳結果のみを返してください。\n\n${params.text}`,
@@ -408,14 +427,15 @@ export async function translateWithClaude(params: {
   return `🌐 翻訳結果（→ ${params.target_lang}）\n\n${translated}`;
 }
 
-export async function generateMorningOneLiner(displayName: string): Promise<string> {
+export async function generateMorningOneLiner(_displayName: string): Promise<string> {
   const dow = ['日', '月', '火', '水', '木', '金', '土'][new Date().getDay()];
   const response = await anthropic.messages.create({
     model: MODEL,
     max_tokens: 80,
+    system: CHARACTER,
     messages: [{
       role: 'user',
-      content: `今日は${dow}曜日です。${displayName}さんへの朝の一言を絵文字1〜2個付きで50字以内で生成してください。返答は一言のみ（余計な説明不要）。`,
+      content: `今日は${dow}曜日です。中田さんへの朝の一言を絵文字1〜2個付きで50字以内で生成してください。返答は一言のみ。`,
     }],
   });
   return response.content[0].type === 'text'
@@ -464,11 +484,12 @@ export async function generateMorningMessage(data: {
   const response = await anthropic.messages.create({
     model: MODEL,
     max_tokens: 512,
+    system: CHARACTER,
     messages: [
       {
         role: 'user',
-        content: `${data.displayName}さんへの朝の挨拶メッセージを作成してください。
-以下の情報を含め、温かく・モチベーションが上がる内容にしてください（300字以内、LINE向け絵文字使用）。
+        content: `中田さんへの朝の挨拶メッセージを作成してください。
+温かく・モチベーションが上がる内容で300字以内にまとめてください。
 
 【今日の予定】
 ${schedulesText}
@@ -484,7 +505,7 @@ ${data.weather}
     ],
   });
 
-  return response.content[0].type === 'text' ? response.content[0].text : `おはようございます、${data.displayName}さん！今日も頑張りましょう！`;
+  return response.content[0].type === 'text' ? response.content[0].text : 'おはようございます！今日も頑張りましょう！☀️';
 }
 
 export async function generateEveningMessage(data: {
@@ -510,11 +531,12 @@ export async function generateEveningMessage(data: {
   const response = await anthropic.messages.create({
     model: MODEL,
     max_tokens: 512,
+    system: CHARACTER,
     messages: [
       {
         role: 'user',
-        content: `${data.displayName}さんへの夜の振り返りメッセージを作成してください。
-一日の労いと明日への準備を促す温かい内容にしてください（300字以内、LINE向け絵文字使用）。
+        content: `中田さんへの夜の振り返りメッセージを作成してください。
+一日の労いと明日への準備を促す温かい内容で300字以内にまとめてください。
 
 【今日の実績】
 ・完了タスク: ${data.completedTasks}件
@@ -523,12 +545,12 @@ export async function generateEveningMessage(data: {
 【明日の予定】
 ${tomorrowText}
 
-形式: お疲れさまの挨拶 → 今日の振り返り → 明日の予定 → 気遣いの一言 → 気分の確認(「今日の気分はどうでしたか？」など)`,
+形式: お疲れさまの挨拶 → 今日の振り返り → 明日の予定 → 気遣いの一言 → 気分の確認`,
       },
     ],
   });
 
-  return response.content[0].type === 'text' ? response.content[0].text : `お疲れさまでした、${data.displayName}さん！ゆっくり休んでね 🌙`;
+  return response.content[0].type === 'text' ? response.content[0].text : 'お疲れ様でした！ゆっくり休んでくださいね 🌙';
 }
 
 export async function generateWeeklySummary(data: {
@@ -561,11 +583,12 @@ export async function generateWeeklySummary(data: {
   const response = await anthropic.messages.create({
     model: MODEL,
     max_tokens: 768,
+    system: CHARACTER,
     messages: [
       {
         role: 'user',
-        content: `${data.displayName}さんへの週次サマリーメッセージを作成してください。
-今週の振り返りと来週への準備を促す、温かく励ましになる内容にしてください（400字以内、LINE向け絵文字使用）。
+        content: `中田さんへの週次サマリーメッセージを作成してください。
+今週の振り返りと来週への準備を促す、温かく励ましになる内容で400字以内にまとめてください。
 
 【今週の実績】
 ・完了タスク: ${data.completedTasks}件
@@ -582,5 +605,5 @@ ${schedulesText}
     ],
   });
 
-  return response.content[0].type === 'text' ? response.content[0].text : `今週もお疲れさまでした、${data.displayName}さん！`;
+  return response.content[0].type === 'text' ? response.content[0].text : '今週もお疲れさまでした！来週も頑張りましょう✨';
 }
