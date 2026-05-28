@@ -132,6 +132,15 @@ export interface Conversation {
   created_at: string;
 }
 
+export interface ScannedSchedule {
+  title: string;
+  start_time: string | null;
+  end_time: string | null;
+  location: string | null;
+  description: string | null;
+  needs_confirmation: boolean;
+}
+
 export interface LineMessage {
   type: string;
   text?: string;

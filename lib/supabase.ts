@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import type { ScannedSchedule } from '@/types';
 
 export const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -50,6 +51,7 @@ export async function getConversationHistory(
       .from('conversations')
       .select('role, content')
       .eq('user_id', userId)
+      .in('role', ['user', 'assistant'])
       .order('created_at', { ascending: false })
       .limit(limit * 2);
 
@@ -119,4 +121,57 @@ export async function getUser(
   } catch {
     return { display_name: 'ユーザー', location: 'Tokyo' };
   }
+}
+
+// ── 画像スキャン保留スケジュール ──────────────────────────────────────────────
+
+export async function savePendingScan(userId: string, schedules: ScannedSchedule[]): Promise<void> {
+  await supabase.from('conversations').delete().eq('user_id', userId).eq('role', 'pending_scan');
+  await supabase.from('conversations').insert({
+    user_id: userId,
+    role: 'pending_scan',
+    content: JSON.stringify(schedules),
+  });
+}
+
+export async function getPendingScan(userId: string): Promise<ScannedSchedule[] | null> {
+  const { data } = await supabase
+    .from('conversations')
+    .select('content')
+    .eq('user_id', userId)
+    .eq('role', 'pending_scan')
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (!data?.length) return null;
+  try {
+    return JSON.parse(data[0].content) as ScannedSchedule[];
+  } catch {
+    return null;
+  }
+}
+
+export async function clearPendingScan(userId: string): Promise<void> {
+  await supabase.from('conversations').delete().eq('user_id', userId).eq('role', 'pending_scan');
+}
+
+export async function bulkInsertSchedules(
+  userId: string,
+  schedules: ScannedSchedule[]
+): Promise<number> {
+  let registered = 0;
+  for (const s of schedules) {
+    if (!s.start_time) continue;
+    const { error } = await supabase.from('schedules').insert({
+      user_id: userId,
+      title: s.title,
+      start_time: s.start_time,
+      end_time: s.end_time ?? null,
+      location: s.location ?? null,
+      description: s.description ?? null,
+      reminded_1h: false,
+      reminded_30m: false,
+    });
+    if (!error) registered++;
+  }
+  return registered;
 }
