@@ -44,7 +44,7 @@ async function getLineProfile(userId: string) {
 
 export async function getConversationHistory(
   userId: string,
-  limit = 10
+  limit = 5
 ): Promise<Array<{ role: 'user' | 'assistant'; content: string }>> {
   try {
     const { data } = await supabase

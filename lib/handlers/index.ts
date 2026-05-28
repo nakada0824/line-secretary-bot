@@ -62,6 +62,21 @@ export async function handleIntent(
       return shopping.markRestock(userId, data);
     case 'COMPLETE_RESTOCK':
       return shopping.completeRestock(userId, data);
+    case 'HELP':
+      return [
+        '【できること一覧】',
+        '',
+        '📅 予定 — 「明日14時に会議」「今日の予定は？」',
+        '✅ タスク — 「資料作成 優先度4 締め切り金曜」',
+        '🛒 買い物 — 「牛乳と卵を買い物リストに」',
+        '📝 メモ — 「〇〇をメモして」',
+        '🎯 習慣 — 「筋トレした」',
+        '📊 朝レポート — 「朝のレポート」',
+        '📷 画像登録 — カレンダー画像→予定を一括登録',
+        '📱 アプリ — 「〇〇を登録して。URLはhttps://...」',
+        '',
+        'キーワードを送るとアプリURLも呼び出せます😊',
+      ].join('\n');
     case 'ADD_APP':
       return apps.addApp(userId, data);
     case 'GET_APPS':

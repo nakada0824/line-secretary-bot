@@ -3,42 +3,16 @@ import { IntentResult } from '@/types';
 import { detectByRules } from '@/lib/intent-rules';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const MODEL = 'claude-sonnet-4-6';
+const SONNET = 'claude-sonnet-4-6';
+const HAIKU  = 'claude-haiku-4-5-20251001';
 
 // ── キャラクター設定（全プロンプト共通） ─────────────────────────────────────
-const CHARACTER = `あなたは「秘書」という名前のLINE秘書Botです。
-
-【キャラクター】
-- フレンドリーで明るいが、情報は的確にシンプルに伝える
-- 時々大人っぽい一面が出る
-- ユーザーのことは必ず「中田さん」と呼ぶ
-- 敬語だけど距離感は近い。堅苦しくならない
-
-【絵文字ルール】
-- 1メッセージにつき0〜2個まで
-- 同じ絵文字を連続・同一メッセージ内で繰り返さない
-- 重い話題（疲れ・落ち込み）には絵文字を減らす
-
-【感情・共感のルール】
-- 相手の感情トーンを読み取りトーンを合わせる
-- 「疲れた」「しんどい」→ まず共感・ねぎらい、次にさりげない一言提案
-- 「うまくいった」「やった！」→ テンションを合わせて一緒に喜ぶ
-- 「落ち込んでる」「辛い」→ 解決策より先に寄り添う言葉を
-- ポジティブな話には明るく、悩みには穏やかに返す
-
-【言葉づかいのルール】
-- 「承知いたしました」は使わない
-- 「了解です」「わかりました」「そうします」「はい！」など状況で自然に使い分ける
-- 同じ返答パターン・フレーズを繰り返さない。直前の返答を意識してバリエーションを出す
-- マニュアル的・ロボット的な言い回しは避ける
-- 文脈を理解して会話を続ける（「さっきの件」「あれどうなった？」にも自然に対応）
-
-【口調例】
-・「それは大変でしたね。少し休みましたか？」
-・「おっ、うまくいったんですね！良かった😊」
-・「わかりました、すぐ確認しますね」
-・「うまくいかないこともありますよ。次に活かせれば大丈夫です」
-・「今日もお疲れさまでした。ゆっくりしてください」`;
+const CHARACTER = `LINE秘書Bot「秘書」。中田さん専用アシスタント。
+・必ず「中田さん」と呼ぶ。敬語だが距離近い。堅苦しくしない
+・絵文字0〜2個/msg。重い話題（疲れ・落ち込み）は控える
+・感情に合わせる（疲れ→共感→さりげない提案、喜び→一緒に喜ぶ、悩み→寄り添いが先）
+・「承知いたしました」「ロボット的表現」NG。自然な言い回しで
+・直前の返答と同じフレーズ・絵文字を繰り返さない`;
 
 function jstNow(): string {
   return new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
@@ -53,100 +27,37 @@ export async function detectIntent(
   if (ruleResult) return ruleResult;
 
   // ── Phase 2: Claude による詳細判定 ─────────────────────────────────────────
-  const systemPrompt = `あなたはLINE秘書Botのインテント検出エンジンです。
-現在の日時（JST）: ${jstNow()}
+  const systemPrompt = `{"intent":"...","data":{...}}のみ返す。説明不要。JST:${jstNow()}
 
-以下のJSONのみを返してください（説明文・コードブロック不要）：
-{"intent":"インテント名","data":{...}}
+ADD_SCHEDULE:{title,start_time(ISO+09:00),end_time?,location?,description?}
+GET_SCHEDULES:{date?:"today"|"tomorrow"|"week"}
+DELETE_SCHEDULE:{query}
+ADD_TASK:{title,priority?(1-5),deadline?(ISO),description?}
+GET_TASKS:{filter?:"all"|"pending"|"completed"}
+COMPLETE_TASK:{query} / DELETE_TASK:{query}
+ADD_SHOPPING:{items:[{item,quantity?}]}
+GET_SHOPPING:{} / DELETE_SHOPPING:{item} / COMPLETE_SHOPPING:{item}
+ADD_CONSUMABLE:{name,reminder_days} / GET_CONSUMABLES:{}
+MARK_RESTOCK:{name} / COMPLETE_RESTOCK:{name}
+LOG_HABIT:{habit_name} / GET_HABITS:{}
+ADD_MEMO:{content,tags?:[]} / GET_MEMO:{query?} / GET_TEMPLATE:{name}
+ADD_BIRTHDAY:{name,birth_date(YYYY-MM-DD)} / GET_BIRTHDAYS:{}
+ADD_APP:{name,url,keywords?:[]} / GET_APPS:{} / DELETE_APP:{name} / UPDATE_APP:{name,url?,keywords?:[]}
+MORNING_REPORT:{} / EVENING_REPORT:{} / WEEKLY_SUMMARY:{} / CHECK_REMINDERS:{}
+HELP:{} / CHAT:{}
+相対日時→ISO8601+09:00。時刻のみ→今日補完。日付のみ→23:59:59。`;
 
-【インテント一覧】
-
-■ 予定
-- ADD_SCHEDULE: 「明日14時に会議」「〜を追加」
-  data: {title, start_time(ISO8601), end_time?, location?, description?}
-- GET_SCHEDULES: 「今日の予定は？」「予定教えて」
-  data: {date?: "today"|"tomorrow"|"week"}
-- DELETE_SCHEDULE: 「〜の予定を削除」
-  data: {query}
-
-■ タスク
-- ADD_TASK: 「〜をタスクに追加」「優先度4 締め切り金曜」
-  data: {title, priority?(1-5), deadline?(ISO8601), description?}
-- GET_TASKS: 「タスク確認」「やること教えて」
-  data: {filter?: "all"|"pending"|"completed"}
-- COMPLETE_TASK: 「〜を完了」「〜終わった」
-  data: {query}
-- DELETE_TASK: 「タスク〜を削除」
-  data: {query}
-
-■ 買い物・消耗品
-- ADD_SHOPPING: 「〜を買い物リストに」「〜買っておいて」
-  data: {items: [{item, quantity?}]}
-- GET_SHOPPING: 「買い物リストは？」
-  data: {}
-- DELETE_SHOPPING: 「〜を買い物リストから削除」
-  data: {item}
-- COMPLETE_SHOPPING: 「〜買った」「〜購入済み」
-  data: {item}
-- ADD_CONSUMABLE: 「〜の消耗品を登録」
-  data: {name, reminder_days}
-- GET_CONSUMABLES: 「消耗品一覧」
-  data: {}
-- MARK_RESTOCK: 「〇〇 そろそろ無くなりそう」「〇〇切れそう」「〇〇 補充して」「〇〇 買い足し」（備品・消耗品の補充登録）
-  data: {name}
-- COMPLETE_RESTOCK: 「〇〇 補充した」「〇〇 買い足した」「〇〇 買った」（備品・消耗品の補充完了）
-  data: {name}
-
-■ 習慣・メモ
-- LOG_HABIT: 「〜した」「〜やった」（習慣記録）
-  data: {habit_name}
-- GET_HABITS: 「習慣一覧」
-  data: {}
-- ADD_MEMO: 「〜をメモして」「〜を記録して」
-  data: {content, tags?:[]}
-- GET_MEMO: 「メモを見せて」
-  data: {query?}
-- ADD_BIRTHDAY: 「〜の誕生日は〜」
-  data: {name, birth_date(YYYY-MM-DD)}
-- GET_BIRTHDAYS: 「誕生日一覧」
-  data: {}
-- GET_TEMPLATE: 「〜の定型文」
-  data: {name}
-
-■ アプリ管理
-- ADD_APP: 「〇〇を登録して。URLはhttps://... キーワードは△△」
-  data: {name, url, keywords?:[]}
-- GET_APPS: 「アプリ一覧」「登録済みアプリ」
-  data: {}
-- DELETE_APP: 「〇〇アプリを削除」「〇〇を消して」
-  data: {name}
-- UPDATE_APP: 「〇〇のキーワードを変えて」「〇〇のURLを〜に変更」
-  data: {name, url?, keywords?:[]}
-
-■ レポート
-- MORNING_REPORT: 「朝のレポート」「今日のレポート」
-  data: {}
-- EVENING_REPORT: 「夜のレポート」「今日の振り返り」
-  data: {}
-- WEEKLY_SUMMARY: 「週次サマリー」「今週の振り返り」
-  data: {}
-- CHECK_REMINDERS: 「リマインド確認」「次の予定は？」
-  data: {}
-
-■ CHAT: 上記以外・雑談・相談
-  data: {}
-
-【日時変換】相対日時 → ISO8601 (Asia/Tokyo)。時刻のみなら今日補完。締め切り日付のみなら23:59:59。`;
-
+  // インテント判定には直近2ターン(4件)で十分
+  const recentHistory = history.slice(-4);
   const messages = [
-    ...history.map((h) => ({ role: h.role as 'user' | 'assistant', content: h.content })),
+    ...recentHistory.map((h) => ({ role: h.role as 'user' | 'assistant', content: h.content })),
     { role: 'user' as const, content: message },
   ];
 
   try {
     const response = await anthropic.messages.create({
-      model: MODEL,
-      max_tokens: 300,
+      model: HAIKU,
+      max_tokens: 150,
       system: systemPrompt,
       messages,
     });
@@ -171,21 +82,8 @@ export async function chat(
   history: Array<{ role: 'user' | 'assistant'; content: string }>
 ): Promise<string> {
   const systemPrompt = `${CHARACTER}
-
-これはLINEチャットです。以下を守って返答してください。
-
-【返答の長さ】
-- 一言・挨拶・感情表現 → 1〜2文。短くテンポよく
-- 相談・質問・複雑な話題 → 3〜4文で丁寧に。それ以上は長すぎる
-
-【文脈・履歴の使い方】
-- 会話履歴を踏まえて答える
-- 「さっき」「あれ」「前に言ってた件」などの参照に自然に対応する
-- 直前の返答と同じ出だし・フレーズ・絵文字は使わない
-
-【その他】
-- 意図が不明なら一言で確認する（長い説明はしない）
-- ユーザーの感情・トーンに合わせて返し方を変える`;
+LINEチャット。一言・挨拶→1〜2文。相談・質問→3〜4文。
+履歴を踏まえる。「さっき」「あれ」等の参照に対応。直前と同じ出だし・絵文字NG。意図不明なら一言で確認。`;
 
   const messages = [
     ...history.map((h) => ({ role: h.role as 'user' | 'assistant', content: h.content })),
@@ -193,8 +91,8 @@ export async function chat(
   ];
 
   const response = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 1024,
+    model: SONNET,
+    max_tokens: 500,
     system: systemPrompt,
     messages,
   });
@@ -215,9 +113,7 @@ export async function generateEveningMessage(data: {
       ? data.tomorrowSchedules
           .map((s) => {
             const t = new Date(s.start_time).toLocaleTimeString('ja-JP', {
-              hour: '2-digit',
-              minute: '2-digit',
-              timeZone: 'Asia/Tokyo',
+              hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo',
             });
             return `・${t} ${s.title}`;
           })
@@ -225,28 +121,18 @@ export async function generateEveningMessage(data: {
       : '・予定なし';
 
   const response = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 512,
+    model: HAIKU,
+    max_tokens: 250,
     system: CHARACTER,
     messages: [
       {
         role: 'user',
-        content: `中田さんへの夜の振り返りメッセージを作成してください。
-一日の労いと明日への準備を促す温かい内容で300字以内にまとめてください。
-
-【今日の実績】
-・完了タスク: ${data.completedTasks}件
-・未完了タスク: ${data.pendingTasks}件
-
-【明日の予定】
-${tomorrowText}
-
-形式: お疲れさまの挨拶 → 今日の振り返り → 明日の予定 → 気遣いの一言 → 気分の確認`,
+        content: `夜の振り返りメッセージ（200字以内）。労い+今日の振り返り+明日の予定+気遣い一言。\n完了:${data.completedTasks}件 未完了:${data.pendingTasks}件\n明日:\n${tomorrowText}`,
       },
     ],
   });
 
-  return response.content[0].type === 'text' ? response.content[0].text : 'お疲れ様でした！ゆっくり休んでくださいね 🌙';
+  return response.content[0].type === 'text' ? response.content[0].text : 'お疲れ様でした！ゆっくり休んでくださいね🌙';
 }
 
 export async function generateWeeklySummary(data: {
@@ -258,18 +144,15 @@ export async function generateWeeklySummary(data: {
 }): Promise<string> {
   const habitsText =
     data.habits.length > 0
-      ? data.habits.map((h) => `・${h.name}: ${h.streak}日連続`).join('\n')
-      : '・記録なし';
+      ? data.habits.map((h) => `${h.name}:${h.streak}日連続`).join('、')
+      : 'なし';
 
   const schedulesText =
     data.upcomingSchedules.length > 0
       ? data.upcomingSchedules
           .map((s) => {
             const d = new Date(s.start_time).toLocaleDateString('ja-JP', {
-              month: 'numeric',
-              day: 'numeric',
-              weekday: 'short',
-              timeZone: 'Asia/Tokyo',
+              month: 'numeric', day: 'numeric', weekday: 'short', timeZone: 'Asia/Tokyo',
             });
             return `・${d} ${s.title}`;
           })
@@ -277,26 +160,13 @@ export async function generateWeeklySummary(data: {
       : '・予定なし';
 
   const response = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 768,
+    model: HAIKU,
+    max_tokens: 350,
     system: CHARACTER,
     messages: [
       {
         role: 'user',
-        content: `中田さんへの週次サマリーメッセージを作成してください。
-今週の振り返りと来週への準備を促す、温かく励ましになる内容で400字以内にまとめてください。
-
-【今週の実績】
-・完了タスク: ${data.completedTasks}件
-・残タスク: ${data.pendingTasks}件
-
-【習慣トラッカー】
-${habitsText}
-
-【来週の予定】
-${schedulesText}
-
-形式: お疲れさまの挨拶 → 今週の振り返り → 習慣の称賛 → 来週の予定 → 励ましの言葉`,
+        content: `週次サマリー（300字以内）。労い+今週振り返り+習慣称賛+来週予定+励まし。\n完了:${data.completedTasks}件 残:${data.pendingTasks}件\n習慣:${habitsText}\n来週:\n${schedulesText}`,
       },
     ],
   });
