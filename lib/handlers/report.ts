@@ -24,6 +24,11 @@ function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' });
 }
 
+function fmtTimeOrAllDay(iso: string): string {
+  const t = fmtTime(iso);
+  return t === '00:00' ? '終日' : t;
+}
+
 function fmtDateShort(iso: string) {
   const d = new Date(new Date(iso).toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
   const weekday = ['日', '月', '火', '水', '木', '金', '土'][d.getDay()];
@@ -65,10 +70,10 @@ export async function getMorningReport(userId: string): Promise<string> {
       .gte('start_time', todayStart.toISOString())
       .lte('start_time', todayEnd.toISOString())
       .order('start_time'),
-    // 今週残りの予定（明日〜今週末）
+    // 今週の予定（今日〜今週末）
     supabase.from('schedules').select('id, title, start_time, location')
       .eq('user_id', userId)
-      .gt('start_time', todayEnd.toISOString())
+      .gte('start_time', todayStart.toISOString())
       .lte('start_time', weekEnd.toISOString())
       .order('start_time'),
     // 今日締め切りのタスク
@@ -135,14 +140,23 @@ export async function getMorningReport(userId: string): Promise<string> {
     }
   }
 
-  // ── 今週の予定 ──
+  // ── 今週の予定（今日〜週末） ──
   lines.push('');
   lines.push('━━━ 📆 今週の予定 ━━━');
   if (weekScheds.length === 0) {
-    lines.push('（予定なし）');
+    lines.push('今週の予定はまだありません');
   } else {
     for (const s of weekScheds) {
-      lines.push(`・${fmtDateShort(s.start_time)} ${fmtTime(s.start_time)} ${s.title}${s.location ? `（${s.location}）` : ''}`);
+      lines.push(`・${fmtDateShort(s.start_time)} ${fmtTimeOrAllDay(s.start_time)} ${s.title}${s.location ? `（${s.location}）` : ''}`);
+    }
+  }
+
+  // ── 要補充の備品 ──
+  if (restockItems.length > 0) {
+    lines.push('');
+    lines.push('━━━ 🔔 そろそろ補充 ━━━');
+    for (const item of restockItems) {
+      lines.push(`・${item.name}`);
     }
   }
 
@@ -181,7 +195,7 @@ export async function getMorningReport(userId: string): Promise<string> {
     }
   }
 
-  // ── 買い物・備品 ──
+  // ── 買い物リスト ──
   lines.push('');
   lines.push('━━━ 🛒 買い物リスト ━━━');
   if (shoppingItems.length === 0) {
@@ -192,19 +206,15 @@ export async function getMorningReport(userId: string): Promise<string> {
     }
   }
 
-  // ── 要補充の備品 ──
-  if (restockItems.length > 0) {
-    lines.push('');
-    lines.push('━━━ 🔔 そろそろ補充 ━━━');
-    for (const item of restockItems) {
-      lines.push(`・${item.name}`);
-    }
-  }
-
   // ── 一言 ──
   lines.push('');
   lines.push('━━━ 💬 一言 ━━━');
   lines.push(pickOneLiner());
+
+  // ── カレンダーリンク ──
+  lines.push('');
+  lines.push('📅 カレンダーで詳しく見る');
+  lines.push('https://secretary-app-bay.vercel.app/calendar');
 
   return lines.join('\n');
 }
