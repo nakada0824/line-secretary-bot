@@ -78,6 +78,65 @@ export async function completeShopping(userId: string, data: Record<string, unkn
   return `✅ 「${item.item}」を購入済みにしました！`;
 }
 
+export async function markRestock(userId: string, data: Record<string, unknown>): Promise<string> {
+  if (!data.name) return '補充が必要な備品名を教えてください。';
+
+  const { data: existing } = await supabase
+    .from('consumables')
+    .select('id')
+    .eq('user_id', userId)
+    .ilike('name', String(data.name))
+    .limit(1);
+
+  if (existing?.length) {
+    await supabase.from('consumables').update({ need_restock: true }).eq('id', (existing[0] as { id: string }).id);
+  } else {
+    const { error } = await supabase.from('consumables').insert({
+      user_id: userId,
+      name: data.name,
+      reminder_days: 0,
+      need_restock: true,
+    });
+    if (error) throw error;
+  }
+
+  const phrases = [
+    `了解しました！朝のリマインドでお伝えしますね✨`,
+    `わかりました、「${data.name}」を補充リストに入れておきますね😊`,
+    `はい！「${data.name}」、朝のレポートでリマインドします。`,
+  ];
+  return phrases[Math.floor(Math.random() * phrases.length)];
+}
+
+export async function completeRestock(userId: string, data: Record<string, unknown>): Promise<string> {
+  if (!data.name) return '補充した備品名を教えてください。';
+
+  const { data: items } = await supabase
+    .from('consumables')
+    .select('id, name')
+    .eq('user_id', userId)
+    .eq('need_restock', true)
+    .ilike('name', `%${data.name}%`)
+    .limit(1);
+
+  if (!items?.length) {
+    return `「${data.name}」は補充リストに見つかりませんでした。`;
+  }
+
+  const item = items[0] as { id: string; name: string };
+  await supabase
+    .from('consumables')
+    .update({ need_restock: false, last_purchase_date: new Date().toISOString() })
+    .eq('id', item.id);
+
+  const phrases = [
+    `お疲れさまです！リストから消しておきますね😊`,
+    `「${item.name}」購入済みにしました！✅`,
+    `了解です、「${item.name}」の補充完了ですね✨`,
+  ];
+  return phrases[Math.floor(Math.random() * phrases.length)];
+}
+
 export async function addConsumable(userId: string, data: Record<string, unknown>): Promise<string> {
   if (!data.name) return '消耗品名を教えてください。';
 

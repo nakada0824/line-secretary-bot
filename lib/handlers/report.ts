@@ -57,6 +57,7 @@ export async function getMorningReport(userId: string): Promise<string> {
     weekTaskRes,
     importantTaskRes,
     shoppingRes,
+    restockRes,
   ] = await Promise.all([
     // 今日の予定（時間順）
     supabase.from('schedules').select('id, title, start_time, location')
@@ -92,6 +93,11 @@ export async function getMorningReport(userId: string): Promise<string> {
     supabase.from('shopping_list').select('item, quantity')
       .eq('user_id', userId).eq('checked', false)
       .order('created_at', { ascending: true }),
+    // 要補充の備品
+    supabase.from('consumables').select('name')
+      .eq('user_id', userId)
+      .eq('need_restock', true)
+      .order('created_at', { ascending: true }),
   ]);
 
   const todayScheds    = (todaySchedRes.data    ?? []) as Schedule[];
@@ -100,6 +106,7 @@ export async function getMorningReport(userId: string): Promise<string> {
   const weekTasks      = (weekTaskRes.data      ?? []) as Task[];
   const importantTasks = (importantTaskRes.data ?? []) as Task[];
   const shoppingItems  = (shoppingRes.data      ?? []) as ShoppingItem[];
+  const restockItems   = (restockRes.data       ?? []) as Array<{ name: string }>;
 
   // 今日・今週締め切りに既出のタスクIDを除外して重複を防ぐ
   const shownTaskIds = new Set([
@@ -182,6 +189,15 @@ export async function getMorningReport(userId: string): Promise<string> {
   } else {
     for (const item of shoppingItems) {
       lines.push(`・${item.item}${item.quantity ? `（${item.quantity}）` : ''}`);
+    }
+  }
+
+  // ── 要補充の備品 ──
+  if (restockItems.length > 0) {
+    lines.push('');
+    lines.push('━━━ 🔔 そろそろ補充 ━━━');
+    for (const item of restockItems) {
+      lines.push(`・${item.name}`);
     }
   }
 

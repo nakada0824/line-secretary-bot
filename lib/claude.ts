@@ -92,6 +92,10 @@ export async function detectIntent(
   data: {name, reminder_days}
 - GET_CONSUMABLES: 「消耗品一覧」
   data: {}
+- MARK_RESTOCK: 「〇〇 そろそろ無くなりそう」「〇〇切れそう」「〇〇 補充して」「〇〇 買い足し」（備品・消耗品の補充登録）
+  data: {name}
+- COMPLETE_RESTOCK: 「〇〇 補充した」「〇〇 買い足した」「〇〇 買った」（備品・消耗品の補充完了）
+  data: {name}
 
 ■ 習慣・メモ
 - LOG_HABIT: 「〜した」「〜やった」（習慣記録）

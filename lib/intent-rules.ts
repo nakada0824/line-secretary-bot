@@ -140,17 +140,25 @@ function tryGreeting(m: string): IntentResult | null {
   return null;
 }
 
+// ── ヘルプ ────────────────────────────────────────────────────────────────
+function tryHelp(m: string): IntentResult | null {
+  if (/^(ヘルプ|使い方|何ができる[？?]?|どう使うの[？?]?|機能教えて|機能は[？?]?)$/.test(m.replace(/[！？。\s]+$/, '')))
+    return { intent: 'HELP', data: {} };
+  return null;
+}
+
 // ── 予定確認（GET_SCHEDULES）────────────────────────────────────────────────
-// 「今日の予定は？」「明日の予定ある？」「今週の予定を教えて」etc.
+// 「今日の予定は？」「明日の予定ある？」「スケジュール確認」「今月何がある？」etc.
 const SCHEDULE_QUERY = new RegExp(
   '((今日|本日|明日|あさって|今週|来週|今月|来月|[０-９0-9]+月[０-９0-9]+日?)の?)?'
-  + '予定'
+  + '(予定|スケジュール)'
   + ASK.source
 );
+const SCHEDULE_COMMAND = /^(スケジュール確認|予定確認)$|^(今[日週月]何がある)[？?]?$/;
 const SCHEDULE_MUTATE = /追加|入れて|登録|作って|削除|消して|キャンセル/;
 
 function tryGetSchedules(m: string): IntentResult | null {
-  if (!SCHEDULE_QUERY.test(m)) return null;
+  if (!SCHEDULE_QUERY.test(m) && !SCHEDULE_COMMAND.test(m)) return null;
   if (SCHEDULE_MUTATE.test(m)) return null; // 追加・削除は Claude へ
   let date: string | undefined;
   if (/今日|本日/.test(m)) date = 'today';
@@ -186,6 +194,28 @@ function tryGetHabits(m: string): IntentResult | null {
   return null;
 }
 
+// ── 備品補充登録 (MARK_RESTOCK) ───────────────────────────────────────────────
+const MARK_RESTOCK_PAT = /^(.+?)[\s　]*(そろそろ(無くなりそう|なくなりそう|切れ(そう)?)|切れそう|無くなりそう|なくなりそう|補充して(ください)?|補充お願い|買い足し(して)?|そろそろ補充|在庫(切れ|なし))$/;
+
+function tryMarkRestock(m: string): IntentResult | null {
+  const match = m.match(MARK_RESTOCK_PAT);
+  if (!match) return null;
+  const name = match[1].trim();
+  if (name.length === 0 || name.length > 20) return null;
+  return { intent: 'MARK_RESTOCK', data: { name } };
+}
+
+// ── 備品補充完了 (COMPLETE_RESTOCK) ──────────────────────────────────────────
+const COMPLETE_RESTOCK_PAT = /^(.+?)[\s　]*(補充した|補充完了|買い足した|補充できた|補充しました|補充済み)$/;
+
+function tryCompleteRestock(m: string): IntentResult | null {
+  const match = m.match(COMPLETE_RESTOCK_PAT);
+  if (!match) return null;
+  const name = match[1].trim();
+  if (name.length === 0 || name.length > 20) return null;
+  return { intent: 'COMPLETE_RESTOCK', data: { name } };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // メイン判定関数
 // ─────────────────────────────────────────────────────────────────────────────
@@ -201,6 +231,8 @@ export function detectByRules(message: string): IntentResult | null {
     tryGetTasks(m) ??
     tryGetShopping(m) ??
     tryGetHabits(m) ??
+    tryMarkRestock(m) ??
+    tryCompleteRestock(m) ??
     null
   );
 }

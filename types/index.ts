@@ -18,6 +18,8 @@ export type Intent =
   | 'GET_BIRTHDAYS'
   | 'ADD_CONSUMABLE'
   | 'GET_CONSUMABLES'
+  | 'MARK_RESTOCK'
+  | 'COMPLETE_RESTOCK'
   | 'GET_TEMPLATE'
   | 'MORNING_REPORT'
   | 'EVENING_REPORT'
@@ -25,6 +27,7 @@ export type Intent =
   | 'CHECK_REMINDERS'
   | 'OPEN_WEB_APP'
   | 'INSTANT_REPLY'
+  | 'HELP'
   | 'CHAT';
 
 export interface IntentResult {
@@ -83,6 +86,7 @@ export interface Consumable {
   name: string;
   reminder_days: number;
   last_purchase_date?: string;
+  need_restock: boolean;
   created_at: string;
 }
 
