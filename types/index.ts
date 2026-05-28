@@ -25,6 +25,10 @@ export type Intent =
   | 'EVENING_REPORT'
   | 'WEEKLY_SUMMARY'
   | 'CHECK_REMINDERS'
+  | 'ADD_APP'
+  | 'GET_APPS'
+  | 'DELETE_APP'
+  | 'UPDATE_APP'
   | 'OPEN_WEB_APP'
   | 'INSTANT_REPLY'
   | 'HELP'
@@ -129,6 +133,15 @@ export interface Conversation {
   user_id: string;
   role: 'user' | 'assistant';
   content: string;
+  created_at: string;
+}
+
+export interface App {
+  id: string;
+  user_id: string;
+  name: string;
+  url: string;
+  keywords: string[];
   created_at: string;
 }
 

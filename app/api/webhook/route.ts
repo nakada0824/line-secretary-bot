@@ -11,6 +11,7 @@ import {
 } from '@/lib/supabase';
 import { detectIntent } from '@/lib/claude';
 import { scanImageForSchedules } from '@/lib/claude-vision';
+import { findAppByKeyword } from '@/lib/supabase';
 import { handleIntent } from '@/lib/handlers';
 import { runBackgroundReminders } from '@/lib/handlers/report';
 import { checkRateLimit, cleanupRateLimit, logSecurity, logError } from '@/lib/security';
@@ -156,6 +157,21 @@ async function processEvent(event: LineEvent): Promise<void> {
 
     // ── 画像スキャン確認（「はい」「いいえ」）──────────────────────────────
     if (await checkPendingScanConfirmation(userId, userMessage, replyToken)) return;
+
+    // ── アプリキーワード呼び出し（管理コマンドは除外） ────────────────────
+    const APP_MGMT = /アプリ(登録|削除|変更|更新|一覧)|登録して.*(url|URL|http)/i;
+    if (!APP_MGMT.test(userMessage)) {
+      const foundApp = await findAppByKeyword(userId, userMessage);
+      if (foundApp) {
+        const appResponse = `${foundApp.name}はこちらです✨\n${foundApp.url}`;
+        await replyMessage(replyToken, [textMessage(appResponse)]);
+        Promise.allSettled([
+          saveConversation(userId, 'user', userMessage),
+          saveConversation(userId, 'assistant', appResponse),
+        ]).catch((err) => logError('background_tasks', err, { uid: userId.slice(0, 8) }));
+        return;
+      }
+    }
 
     // ── 通常のインテント処理 ───────────────────────────────────────────────
     const intentResult = await detectIntent(userMessage, history);

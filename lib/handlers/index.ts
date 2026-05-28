@@ -7,6 +7,7 @@ import * as memo from './memo';
 import * as birthday from './birthday';
 import * as chatHandler from './chat';
 import * as report from './report';
+import * as apps from './apps';
 
 export async function handleIntent(
   userId: string,
@@ -61,6 +62,14 @@ export async function handleIntent(
       return shopping.markRestock(userId, data);
     case 'COMPLETE_RESTOCK':
       return shopping.completeRestock(userId, data);
+    case 'ADD_APP':
+      return apps.addApp(userId, data);
+    case 'GET_APPS':
+      return apps.listApps(userId);
+    case 'DELETE_APP':
+      return apps.deleteApp(userId, data);
+    case 'UPDATE_APP':
+      return apps.updateApp(userId, data);
     case 'INSTANT_REPLY':
       return data.text as string;
     case 'OPEN_WEB_APP': {

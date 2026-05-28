@@ -113,6 +113,16 @@ export async function detectIntent(
 - GET_TEMPLATE: 「〜の定型文」
   data: {name}
 
+■ アプリ管理
+- ADD_APP: 「〇〇を登録して。URLはhttps://... キーワードは△△」
+  data: {name, url, keywords?:[]}
+- GET_APPS: 「アプリ一覧」「登録済みアプリ」
+  data: {}
+- DELETE_APP: 「〇〇アプリを削除」「〇〇を消して」
+  data: {name}
+- UPDATE_APP: 「〇〇のキーワードを変えて」「〇〇のURLを〜に変更」
+  data: {name, url?, keywords?:[]}
+
 ■ レポート
 - MORNING_REPORT: 「朝のレポート」「今日のレポート」
   data: {}

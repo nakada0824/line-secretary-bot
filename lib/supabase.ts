@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import type { ScannedSchedule } from '@/types';
+import type { ScannedSchedule, App } from '@/types';
 
 export const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -152,6 +152,73 @@ export async function getPendingScan(userId: string): Promise<ScannedSchedule[] 
 
 export async function clearPendingScan(userId: string): Promise<void> {
   await supabase.from('conversations').delete().eq('user_id', userId).eq('role', 'pending_scan');
+}
+
+// ── アプリ登録 ─────────────────────────────────────────────────────────────────
+
+export async function getApps(userId: string): Promise<App[]> {
+  const { data } = await supabase
+    .from('apps')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: true });
+  return (data ?? []) as App[];
+}
+
+export async function findAppByKeyword(userId: string, message: string): Promise<App | null> {
+  try {
+    const apps = await getApps(userId);
+    const lower = message.toLowerCase();
+    for (const app of apps) {
+      for (const kw of (app.keywords ?? [])) {
+        if (kw && lower.includes(kw.toLowerCase())) return app;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function insertApp(
+  userId: string,
+  name: string,
+  url: string,
+  keywords: string[]
+): Promise<{ error: string | null }> {
+  const { error } = await supabase.from('apps').insert({ user_id: userId, name, url, keywords });
+  return { error: error?.message ?? null };
+}
+
+export async function deleteAppByName(
+  userId: string,
+  query: string
+): Promise<{ deleted: string | null; error: string | null }> {
+  const { data } = await supabase
+    .from('apps')
+    .select('id, name')
+    .eq('user_id', userId)
+    .ilike('name', `%${query}%`);
+  if (!data?.length) return { deleted: null, error: 'not_found' };
+  const target = data[0] as { id: string; name: string };
+  const { error } = await supabase.from('apps').delete().eq('id', target.id);
+  return { deleted: error ? null : target.name, error: error?.message ?? null };
+}
+
+export async function updateAppByName(
+  userId: string,
+  query: string,
+  updates: { url?: string; keywords?: string[] }
+): Promise<{ updated: string | null; error: string | null }> {
+  const { data } = await supabase
+    .from('apps')
+    .select('id, name')
+    .eq('user_id', userId)
+    .ilike('name', `%${query}%`);
+  if (!data?.length) return { updated: null, error: 'not_found' };
+  const target = data[0] as { id: string; name: string };
+  const { error } = await supabase.from('apps').update(updates).eq('id', target.id);
+  return { updated: error ? null : target.name, error: error?.message ?? null };
 }
 
 export async function bulkInsertSchedules(

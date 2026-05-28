@@ -194,6 +194,13 @@ function tryGetHabits(m: string): IntentResult | null {
   return null;
 }
 
+// ── アプリ一覧 (GET_APPS) ──────────────────────────────────────────────────────
+function tryGetApps(m: string): IntentResult | null {
+  if (/^(アプリ(一覧|リスト|見せて|教えて)|登録(済み)?アプリ)[!！。\s]*$/.test(m))
+    return { intent: 'GET_APPS', data: {} };
+  return null;
+}
+
 // ── 備品補充登録 (MARK_RESTOCK) ───────────────────────────────────────────────
 const MARK_RESTOCK_PAT = /^(.+?)[\s　]*(そろそろ(無くなりそう|なくなりそう|切れ(そう)?)|切れそう|無くなりそう|なくなりそう|補充して(ください)?|補充お願い|買い足し(して)?|そろそろ補充|在庫(切れ|なし))$/;
 
@@ -231,6 +238,7 @@ export function detectByRules(message: string): IntentResult | null {
     tryGetTasks(m) ??
     tryGetShopping(m) ??
     tryGetHabits(m) ??
+    tryGetApps(m) ??
     tryMarkRestock(m) ??
     tryCompleteRestock(m) ??
     null
