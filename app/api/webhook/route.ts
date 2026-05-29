@@ -8,10 +8,10 @@ import {
   getPendingScan,
   clearPendingScan,
   bulkInsertSchedules,
+  findAppByKeyword,
 } from '@/lib/supabase';
 import { detectIntent } from '@/lib/claude';
 import { scanImageForSchedules } from '@/lib/claude-vision';
-import { findAppByKeyword } from '@/lib/supabase';
 import { handleIntent } from '@/lib/handlers';
 import { runBackgroundReminders } from '@/lib/handlers/report';
 import { checkRateLimit, cleanupRateLimit, logSecurity, logError } from '@/lib/security';
@@ -111,6 +111,7 @@ async function processEvent(event: LineEvent): Promise<void> {
       logSecurity('rate_limit_exceeded', { uid: userId.slice(0, 8) });
       return;
     }
+    await upsertUser(userId);
     try {
       await handleImageMessage(userId, replyToken, messageId);
     } catch (err) {
