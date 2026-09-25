@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { query } from '@/lib/db';
 import Anthropic from '@anthropic-ai/sdk';
 import { logSecurity } from '@/lib/security';
 
@@ -21,14 +21,12 @@ export async function GET(request: NextRequest): Promise<Response> {
 
   const results: Record<string, { ok: boolean; detail?: string }> = {};
 
-  // 1. Supabase 接続確認
+  // 1. DB（Neon）接続確認
   try {
-    const { error } = await supabase.from('users').select('user_id').limit(1);
-    results.supabase = error
-      ? { ok: false, detail: error.message }
-      : { ok: true };
+    await query('SELECT user_id FROM users LIMIT 1');
+    results.database = { ok: true };
   } catch (e) {
-    results.supabase = { ok: false, detail: String(e) };
+    results.database = { ok: false, detail: String(e) };
   }
 
   // 2. Anthropic API 接続確認
@@ -63,8 +61,7 @@ export async function GET(request: NextRequest): Promise<Response> {
   const envKeys = [
     'LINE_CHANNEL_SECRET',
     'LINE_CHANNEL_ACCESS_TOKEN',
-    'SUPABASE_URL',
-    'SUPABASE_SERVICE_ROLE_KEY',
+    'DATABASE_URL',
     'ANTHROPIC_API_KEY',
     'HEALTH_CHECK_SECRET',
   ];

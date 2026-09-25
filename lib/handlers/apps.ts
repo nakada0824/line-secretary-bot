@@ -1,4 +1,4 @@
-import { getApps, insertApp, deleteAppByName, updateAppByName } from '@/lib/supabase';
+import { getApps, insertApp, deleteAppByName, updateAppByName } from '@/lib/db';
 
 export async function addApp(userId: string, data: Record<string, unknown>): Promise<string> {
   const name = String(data.name ?? '').trim();

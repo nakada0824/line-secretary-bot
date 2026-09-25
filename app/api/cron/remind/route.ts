@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { query } from '@/lib/db';
 import { pushMessage, textMessage } from '@/lib/line';
 import { Schedule } from '@/types';
 
@@ -53,33 +53,19 @@ export async function GET(request: NextRequest): Promise<Response> {
   const tomorrowRange = dayRange(now, 1);
   const in3dRange    = dayRange(now, 3);
 
-  const [todayRes, tomorrowRes, in3dRes] = await Promise.all([
-    supabase
-      .from('schedules')
-      .select('id, title, start_time, location')
-      .eq('user_id', userId)
-      .gte('start_time', todayRange.start)
-      .lte('start_time', todayRange.end)
-      .order('start_time'),
-    supabase
-      .from('schedules')
-      .select('id, title, start_time, location')
-      .eq('user_id', userId)
-      .gte('start_time', tomorrowRange.start)
-      .lte('start_time', tomorrowRange.end)
-      .order('start_time'),
-    supabase
-      .from('schedules')
-      .select('id, title, start_time, location')
-      .eq('user_id', userId)
-      .gte('start_time', in3dRange.start)
-      .lte('start_time', in3dRange.end)
-      .order('start_time'),
-  ]);
+  const schedulesIn = (range: { start: string; end: string }) =>
+    query<Schedule>(
+      `SELECT id, title, start_time, location FROM schedules
+       WHERE user_id = $1 AND start_time >= $2 AND start_time <= $3
+       ORDER BY start_time`,
+      [userId, range.start, range.end]
+    );
 
-  const todayScheds    = (todayRes.data    ?? []) as Schedule[];
-  const tomorrowScheds = (tomorrowRes.data ?? []) as Schedule[];
-  const in3dScheds     = (in3dRes.data     ?? []) as Schedule[];
+  const [todayScheds, tomorrowScheds, in3dScheds] = await Promise.all([
+    schedulesIn(todayRange),
+    schedulesIn(tomorrowRange),
+    schedulesIn(in3dRange),
+  ]);
 
   if (!todayScheds.length && !tomorrowScheds.length && !in3dScheds.length) {
     return Response.json({ sent: false, reason: 'no schedules' });

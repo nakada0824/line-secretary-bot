@@ -9,7 +9,7 @@ import {
   clearPendingScan,
   bulkInsertSchedules,
   findAppByKeyword,
-} from '@/lib/supabase';
+} from '@/lib/db';
 import { detectIntent } from '@/lib/claude';
 import { scanImageForSchedules } from '@/lib/claude-vision';
 import { handleIntent } from '@/lib/handlers';

@@ -1,4 +1,4 @@
-import { supabase, getUserDisplayName, getUser } from '@/lib/supabase';
+import { query, getUserDisplayName, getUser } from '@/lib/db';
 import { pushMessage, textMessage } from '@/lib/line';
 import { generateEveningMessage, generateWeeklySummary } from '@/lib/claude';
 import { Schedule, Task, ShoppingItem, Habit } from '@/types';
@@ -56,62 +56,62 @@ export async function getMorningReport(userId: string): Promise<string> {
   weekEnd.setHours(23, 59, 59, 999);
 
   const [
-    todaySchedRes,
-    weekSchedRes,
-    todayTaskRes,
-    weekTaskRes,
-    importantTaskRes,
-    shoppingRes,
-    restockRes,
+    todayScheds,
+    weekScheds,
+    todayTasks,
+    weekTasks,
+    importantTasks,
+    shoppingItems,
+    restockItems,
   ] = await Promise.all([
     // 今日の予定（時間順）
-    supabase.from('schedules').select('id, title, start_time, location')
-      .eq('user_id', userId)
-      .gte('start_time', todayStart.toISOString())
-      .lte('start_time', todayEnd.toISOString())
-      .order('start_time'),
+    query<Schedule>(
+      `SELECT id, title, start_time, location FROM schedules
+       WHERE user_id = $1 AND start_time >= $2 AND start_time <= $3
+       ORDER BY start_time`,
+      [userId, todayStart.toISOString(), todayEnd.toISOString()]
+    ),
     // 今週の予定（今日〜今週末）
-    supabase.from('schedules').select('id, title, start_time, location')
-      .eq('user_id', userId)
-      .gte('start_time', todayStart.toISOString())
-      .lte('start_time', weekEnd.toISOString())
-      .order('start_time'),
+    query<Schedule>(
+      `SELECT id, title, start_time, location FROM schedules
+       WHERE user_id = $1 AND start_time >= $2 AND start_time <= $3
+       ORDER BY start_time`,
+      [userId, todayStart.toISOString(), weekEnd.toISOString()]
+    ),
     // 今日締め切りのタスク
-    supabase.from('tasks').select('id, title, priority, deadline')
-      .eq('user_id', userId).eq('completed', false)
-      .not('deadline', 'is', null)
-      .lte('deadline', todayEnd.toISOString())
-      .order('priority', { ascending: false }),
+    query<Task>(
+      `SELECT id, title, priority, deadline FROM tasks
+       WHERE user_id = $1 AND completed = false AND deadline IS NOT NULL AND deadline <= $2
+       ORDER BY priority DESC`,
+      [userId, todayEnd.toISOString()]
+    ),
     // 今週締め切りのタスク（明日〜今週末）
-    supabase.from('tasks').select('id, title, priority, deadline')
-      .eq('user_id', userId).eq('completed', false)
-      .not('deadline', 'is', null)
-      .gt('deadline', todayEnd.toISOString())
-      .lte('deadline', weekEnd.toISOString())
-      .order('deadline'),
+    query<Task>(
+      `SELECT id, title, priority, deadline FROM tasks
+       WHERE user_id = $1 AND completed = false AND deadline > $2 AND deadline <= $3
+       ORDER BY deadline`,
+      [userId, todayEnd.toISOString(), weekEnd.toISOString()]
+    ),
     // 優先度4〜5の重要タスク
-    supabase.from('tasks').select('id, title, priority, deadline')
-      .eq('user_id', userId).eq('completed', false)
-      .gte('priority', 4)
-      .order('priority', { ascending: false }),
+    query<Task>(
+      `SELECT id, title, priority, deadline FROM tasks
+       WHERE user_id = $1 AND completed = false AND priority >= 4
+       ORDER BY priority DESC`,
+      [userId]
+    ),
     // 未購入の買い物リスト
-    supabase.from('shopping_list').select('item, quantity')
-      .eq('user_id', userId).eq('checked', false)
-      .order('created_at', { ascending: true }),
+    query<ShoppingItem>(
+      `SELECT item, quantity FROM shopping_list
+       WHERE user_id = $1 AND checked = false ORDER BY created_at ASC`,
+      [userId]
+    ),
     // 要補充の備品
-    supabase.from('consumables').select('name')
-      .eq('user_id', userId)
-      .eq('need_restock', true)
-      .order('created_at', { ascending: true }),
+    query<{ name: string }>(
+      `SELECT name FROM consumables
+       WHERE user_id = $1 AND need_restock = true ORDER BY created_at ASC`,
+      [userId]
+    ),
   ]);
-
-  const todayScheds    = (todaySchedRes.data    ?? []) as Schedule[];
-  const weekScheds     = (weekSchedRes.data     ?? []) as Schedule[];
-  const todayTasks     = (todayTaskRes.data     ?? []) as Task[];
-  const weekTasks      = (weekTaskRes.data      ?? []) as Task[];
-  const importantTasks = (importantTaskRes.data ?? []) as Task[];
-  const shoppingItems  = (shoppingRes.data      ?? []) as ShoppingItem[];
-  const restockItems   = (restockRes.data       ?? []) as Array<{ name: string }>;
 
   // 今日・今週締め切りに既出のタスクIDを除外して重複を防ぐ
   const shownTaskIds = new Set([
@@ -231,34 +231,38 @@ export async function getEveningReport(userId: string): Promise<string> {
   const tomorrowEnd = new Date(tomorrowStart);
   tomorrowEnd.setHours(23, 59, 59, 999);
 
-  const [displayName, completedRes, pendingRes, tomorrowRes] = await Promise.all([
+  const [displayName, counts, tomorrowSchedules] = await Promise.all([
     getUserDisplayName(userId),
-    supabase
-      .from('tasks')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', userId)
-      .eq('completed', true)
-      .gte('completed_at', todayStart.toISOString()),
-    supabase
-      .from('tasks')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', userId)
-      .eq('completed', false),
-    supabase
-      .from('schedules')
-      .select('title, start_time, location')
-      .eq('user_id', userId)
-      .gte('start_time', tomorrowStart.toISOString())
-      .lte('start_time', tomorrowEnd.toISOString())
-      .order('start_time', { ascending: true }),
+    countTasks(userId, todayStart),
+    query<Schedule>(
+      `SELECT title, start_time, location FROM schedules
+       WHERE user_id = $1 AND start_time >= $2 AND start_time <= $3
+       ORDER BY start_time ASC`,
+      [userId, tomorrowStart.toISOString(), tomorrowEnd.toISOString()]
+    ),
   ]);
 
   return generateEveningMessage({
     displayName,
-    tomorrowSchedules: (tomorrowRes.data ?? []) as Schedule[],
-    completedTasks: completedRes.count ?? 0,
-    pendingTasks: pendingRes.count ?? 0,
+    tomorrowSchedules,
+    completedTasks: counts.completed,
+    pendingTasks: counts.pending,
   });
+}
+
+// completedSince 以降に完了したタスク数と、未完了タスク数
+async function countTasks(
+  userId: string,
+  completedSince: Date
+): Promise<{ completed: number; pending: number }> {
+  const [row] = await query<{ completed: number; pending: number }>(
+    `SELECT
+       COUNT(*) FILTER (WHERE completed = true AND completed_at >= $2)::int AS completed,
+       COUNT(*) FILTER (WHERE completed = false)::int AS pending
+     FROM tasks WHERE user_id = $1`,
+    [userId, completedSince.toISOString()]
+  );
+  return row;
 }
 
 // ───────────────────────────── 週次サマリー ─────────────────────────────
@@ -270,41 +274,27 @@ export async function getWeeklySummaryReport(userId: string): Promise<string> {
   const nextWeekEnd = new Date(now);
   nextWeekEnd.setDate(nextWeekEnd.getDate() + 7);
 
-  const [displayName, completedRes, pendingRes, habitsRes, upcomingRes] = await Promise.all([
+  const [displayName, counts, habits, upcomingSchedules] = await Promise.all([
     getUserDisplayName(userId),
-    supabase
-      .from('tasks')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', userId)
-      .eq('completed', true)
-      .gte('completed_at', weekAgo.toISOString()),
-    supabase
-      .from('tasks')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', userId)
-      .eq('completed', false),
-    supabase
-      .from('habits')
-      .select('name, streak')
-      .eq('user_id', userId)
-      .order('streak', { ascending: false })
-      .limit(5),
-    supabase
-      .from('schedules')
-      .select('title, start_time')
-      .eq('user_id', userId)
-      .gte('start_time', now.toISOString())
-      .lte('start_time', nextWeekEnd.toISOString())
-      .order('start_time', { ascending: true })
-      .limit(5),
+    countTasks(userId, weekAgo),
+    query<Habit>(
+      'SELECT name, streak FROM habits WHERE user_id = $1 ORDER BY streak DESC LIMIT 5',
+      [userId]
+    ),
+    query<Schedule>(
+      `SELECT title, start_time FROM schedules
+       WHERE user_id = $1 AND start_time >= $2 AND start_time <= $3
+       ORDER BY start_time ASC LIMIT 5`,
+      [userId, now.toISOString(), nextWeekEnd.toISOString()]
+    ),
   ]);
 
   return generateWeeklySummary({
     displayName,
-    completedTasks: completedRes.count ?? 0,
-    pendingTasks: pendingRes.count ?? 0,
-    habits: (habitsRes.data ?? []) as Habit[],
-    upcomingSchedules: (upcomingRes.data ?? []) as Schedule[],
+    completedTasks: counts.completed,
+    pendingTasks: counts.pending,
+    habits,
+    upcomingSchedules,
   });
 }
 
@@ -315,31 +305,26 @@ export async function getCheckReminders(userId: string): Promise<string> {
   const in24h = new Date(now);
   in24h.setHours(in24h.getHours() + 24);
 
-  const [scheduleRes, taskRes] = await Promise.all([
-    supabase
-      .from('schedules')
-      .select('title, start_time, location')
-      .eq('user_id', userId)
-      .gte('start_time', now.toISOString())
-      .lte('start_time', in24h.toISOString())
-      .order('start_time', { ascending: true })
-      .limit(5),
-    supabase
-      .from('tasks')
-      .select('title, deadline')
-      .eq('user_id', userId)
-      .eq('completed', false)
-      .not('deadline', 'is', null)
-      .lte('deadline', in24h.toISOString())
-      .order('deadline', { ascending: true })
-      .limit(5),
+  const [schedules, tasks] = await Promise.all([
+    query<Schedule>(
+      `SELECT title, start_time, location FROM schedules
+       WHERE user_id = $1 AND start_time >= $2 AND start_time <= $3
+       ORDER BY start_time ASC LIMIT 5`,
+      [userId, now.toISOString(), in24h.toISOString()]
+    ),
+    query<Task>(
+      `SELECT title, deadline FROM tasks
+       WHERE user_id = $1 AND completed = false AND deadline IS NOT NULL AND deadline <= $2
+       ORDER BY deadline ASC LIMIT 5`,
+      [userId, in24h.toISOString()]
+    ),
   ]);
 
   const lines: string[] = [];
 
-  if (scheduleRes.data?.length) {
+  if (schedules.length) {
     lines.push('📅 今後24時間の予定:');
-    for (const s of scheduleRes.data as Schedule[]) {
+    for (const s of schedules) {
       const t = new Date(s.start_time).toLocaleTimeString('ja-JP', {
         hour: '2-digit',
         minute: '2-digit',
@@ -349,10 +334,10 @@ export async function getCheckReminders(userId: string): Promise<string> {
     }
   }
 
-  if (taskRes.data?.length) {
+  if (tasks.length) {
     if (lines.length) lines.push('');
     lines.push('✅ 期限が迫っているタスク:');
-    for (const t of taskRes.data as Task[]) {
+    for (const t of tasks) {
       const dl = new Date(t.deadline!).toLocaleDateString('ja-JP', {
         month: 'numeric',
         day: 'numeric',
@@ -391,23 +376,19 @@ async function checkScheduleReminders(userId: string, now: Date): Promise<void> 
   type ScheduleRow = { id: string; title: string; start_time: string; location?: string };
 
   const [res1h, res30m] = await Promise.all([
-    supabase
-      .from('schedules')
-      .select('id, title, start_time, location')
-      .eq('user_id', userId)
-      .eq('reminded_1h', false)
-      .gte('start_time', in55m.toISOString())
-      .lte('start_time', in65m.toISOString()),
-    supabase
-      .from('schedules')
-      .select('id, title, start_time, location')
-      .eq('user_id', userId)
-      .eq('reminded_30m', false)
-      .gte('start_time', in25m.toISOString())
-      .lte('start_time', in35m.toISOString()),
+    query<ScheduleRow>(
+      `SELECT id, title, start_time, location FROM schedules
+       WHERE user_id = $1 AND reminded_1h = false AND start_time >= $2 AND start_time <= $3`,
+      [userId, in55m.toISOString(), in65m.toISOString()]
+    ),
+    query<ScheduleRow>(
+      `SELECT id, title, start_time, location FROM schedules
+       WHERE user_id = $1 AND reminded_30m = false AND start_time >= $2 AND start_time <= $3`,
+      [userId, in25m.toISOString(), in35m.toISOString()]
+    ),
   ]);
 
-  for (const s of (res1h.data ?? []) as ScheduleRow[]) {
+  for (const s of res1h) {
     const t = new Date(s.start_time).toLocaleTimeString('ja-JP', {
       hour: '2-digit',
       minute: '2-digit',
@@ -417,11 +398,11 @@ async function checkScheduleReminders(userId: string, now: Date): Promise<void> 
       pushMessage(userId, [
         textMessage(`⏰ 1時間前リマインド\n\n📌 ${s.title}\n🕐 ${t}${s.location ? `\n📍 ${s.location}` : ''}\n\n準備はいいですか？`),
       ]),
-      supabase.from('schedules').update({ reminded_1h: true }).eq('id', s.id),
+      query('UPDATE schedules SET reminded_1h = true WHERE id = $1', [s.id]),
     ]);
   }
 
-  for (const s of (res30m.data ?? []) as ScheduleRow[]) {
+  for (const s of res30m) {
     const t = new Date(s.start_time).toLocaleTimeString('ja-JP', {
       hour: '2-digit',
       minute: '2-digit',
@@ -431,7 +412,7 @@ async function checkScheduleReminders(userId: string, now: Date): Promise<void> 
       pushMessage(userId, [
         textMessage(`⏰ 30分前リマインド\n\n📌 ${s.title}\n🕐 ${t}${s.location ? `\n📍 ${s.location}` : ''}\n\nもうすぐです！`),
       ]),
-      supabase.from('schedules').update({ reminded_30m: true }).eq('id', s.id),
+      query('UPDATE schedules SET reminded_30m = true WHERE id = $1', [s.id]),
     ]);
   }
 }
@@ -451,59 +432,53 @@ async function checkTaskReminders(userId: string, now: Date): Promise<void> {
   in7d.setDate(in7d.getDate() + 7);
   in7d.setHours(23, 59, 59, 999);
 
-  const [week, three, one] = await Promise.all([
-    supabase
-      .from('tasks')
-      .select('id, title, deadline')
-      .eq('user_id', userId)
-      .eq('completed', false)
-      .eq('reminded_week', false)
-      .gte('deadline', in3d.toISOString())
-      .lte('deadline', in7d.toISOString()),
-    supabase
-      .from('tasks')
-      .select('id, title, deadline')
-      .eq('user_id', userId)
-      .eq('completed', false)
-      .eq('reminded_3days', false)
-      .gte('deadline', in1d.toISOString())
-      .lte('deadline', in3d.toISOString()),
-    supabase
-      .from('tasks')
-      .select('id, title')
-      .eq('user_id', userId)
-      .eq('completed', false)
-      .eq('reminded_1day', false)
-      .gte('deadline', jst.toISOString())
-      .lte('deadline', in1d.toISOString()),
-  ]);
-
   type TaskRow = { id: string; title: string; deadline?: string };
 
-  for (const t of (week.data ?? []) as TaskRow[]) {
+  const [week, three, one] = await Promise.all([
+    query<TaskRow>(
+      `SELECT id, title, deadline FROM tasks
+       WHERE user_id = $1 AND completed = false AND reminded_week = false
+         AND deadline >= $2 AND deadline <= $3`,
+      [userId, in3d.toISOString(), in7d.toISOString()]
+    ),
+    query<TaskRow>(
+      `SELECT id, title, deadline FROM tasks
+       WHERE user_id = $1 AND completed = false AND reminded_3days = false
+         AND deadline >= $2 AND deadline <= $3`,
+      [userId, in1d.toISOString(), in3d.toISOString()]
+    ),
+    query<TaskRow>(
+      `SELECT id, title FROM tasks
+       WHERE user_id = $1 AND completed = false AND reminded_1day = false
+         AND deadline >= $2 AND deadline <= $3`,
+      [userId, jst.toISOString(), in1d.toISOString()]
+    ),
+  ]);
+
+  for (const t of week) {
     const dl = new Date(t.deadline!).toLocaleDateString('ja-JP', {
       month: 'numeric', day: 'numeric', weekday: 'short', timeZone: 'Asia/Tokyo',
     });
     await Promise.all([
       pushMessage(userId, [textMessage(`📋 タスクリマインド（1週間前）\n\n「${t.title}」\n📆 締め切り: ${dl}\n\n計画的に進めましょう！`)]),
-      supabase.from('tasks').update({ reminded_week: true }).eq('id', t.id),
+      query('UPDATE tasks SET reminded_week = true WHERE id = $1', [t.id]),
     ]);
   }
 
-  for (const t of (three.data ?? []) as TaskRow[]) {
+  for (const t of three) {
     const dl = new Date(t.deadline!).toLocaleDateString('ja-JP', {
       month: 'numeric', day: 'numeric', timeZone: 'Asia/Tokyo',
     });
     await Promise.all([
       pushMessage(userId, [textMessage(`⚠️ タスクリマインド（3日前）\n\n「${t.title}」\n📆 締め切り: ${dl}\n\nそろそろ本格的に取り組みましょう！`)]),
-      supabase.from('tasks').update({ reminded_3days: true }).eq('id', t.id),
+      query('UPDATE tasks SET reminded_3days = true WHERE id = $1', [t.id]),
     ]);
   }
 
-  for (const t of (one.data ?? []) as TaskRow[]) {
+  for (const t of one) {
     await Promise.all([
       pushMessage(userId, [textMessage(`🔴 タスクリマインド（前日・当日）\n\n「${t.title}」\n\n締め切りが迫っています！頑張れ！💪`)]),
-      supabase.from('tasks').update({ reminded_1day: true }).eq('id', t.id),
+      query('UPDATE tasks SET reminded_1day = true WHERE id = $1', [t.id]),
     ]);
   }
 }

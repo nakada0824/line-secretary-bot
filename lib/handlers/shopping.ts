@@ -1,103 +1,84 @@
-import { supabase } from '@/lib/supabase';
+import { query } from '@/lib/db';
 import { ShoppingItem, Consumable } from '@/types';
 
 export async function addShopping(userId: string, data: Record<string, unknown>): Promise<string> {
   const items = data.items as Array<{ item: string; quantity?: string }>;
   if (!items?.length) return '追加する商品名を教えてください。';
 
-  const rows = items.map((i) => ({
-    user_id: userId,
-    item: i.item,
-    quantity: i.quantity ?? null,
-    checked: false,
-  }));
-
-  const { error } = await supabase.from('shopping_list').insert(rows);
-  if (error) throw error;
+  await query(
+    `INSERT INTO shopping_list (user_id, item, quantity)
+     SELECT $1, * FROM UNNEST($2::text[], $3::text[])`,
+    [userId, items.map((i) => i.item), items.map((i) => i.quantity ?? null)]
+  );
 
   const list = items.map((i) => `・${i.item}${i.quantity ? ` (${i.quantity})` : ''}`).join('\n');
   return `🛒 買い物リストに追加しました！\n\n${list}`;
 }
 
 export async function getShopping(userId: string): Promise<string> {
-  const { data: items, error } = await supabase
-    .from('shopping_list')
-    .select('*')
-    .eq('user_id', userId)
-    .order('checked', { ascending: true })
-    .order('created_at', { ascending: true });
+  const items = await query<ShoppingItem>(
+    'SELECT * FROM shopping_list WHERE user_id = $1 ORDER BY checked ASC, created_at ASC',
+    [userId]
+  );
 
-  if (error) throw error;
-  if (!items?.length) return '🛒 買い物リストは空です。\n\n「牛乳と卵を買い物リストに追加」などで追加できます！';
+  if (!items.length) return '🛒 買い物リストは空です。\n\n「牛乳と卵を買い物リストに追加」などで追加できます！';
 
-  const list = (items as ShoppingItem[])
+  const list = items
     .map((i) => {
       const icon = i.checked ? '✅' : '⬜';
       return `${icon} ${i.item}${i.quantity ? ` (${i.quantity})` : ''}`;
     })
     .join('\n');
 
-  const unchecked = (items as ShoppingItem[]).filter((i) => !i.checked).length;
+  const unchecked = items.filter((i) => !i.checked).length;
   return `🛒 買い物リスト（未購入: ${unchecked}件）\n\n${list}`;
 }
 
 export async function deleteShopping(userId: string, data: Record<string, unknown>): Promise<string> {
   if (!data.item) return '削除する商品名を教えてください。';
 
-  const { data: items, error } = await supabase
-    .from('shopping_list')
-    .select('*')
-    .eq('user_id', userId)
-    .ilike('item', `%${data.item}%`)
-    .limit(1);
+  const items = await query<ShoppingItem>(
+    'SELECT * FROM shopping_list WHERE user_id = $1 AND item ILIKE $2 LIMIT 1',
+    [userId, `%${data.item}%`]
+  );
 
-  if (error) throw error;
-  if (!items?.length) return `「${data.item}」がリストに見つかりませんでした。`;
+  if (!items.length) return `「${data.item}」がリストに見つかりませんでした。`;
 
-  const item = items[0] as ShoppingItem;
-  await supabase.from('shopping_list').delete().eq('id', item.id);
+  const item = items[0];
+  await query('DELETE FROM shopping_list WHERE id = $1', [item.id]);
   return `🗑️ 「${item.item}」を買い物リストから削除しました。`;
 }
 
 export async function completeShopping(userId: string, data: Record<string, unknown>): Promise<string> {
   if (!data.item) return '購入済みにする商品名を教えてください。';
 
-  const { data: items, error } = await supabase
-    .from('shopping_list')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('checked', false)
-    .ilike('item', `%${data.item}%`)
-    .limit(1);
+  const items = await query<ShoppingItem>(
+    'SELECT * FROM shopping_list WHERE user_id = $1 AND checked = false AND item ILIKE $2 LIMIT 1',
+    [userId, `%${data.item}%`]
+  );
 
-  if (error) throw error;
-  if (!items?.length) return `「${data.item}」が未購入リストに見つかりませんでした。`;
+  if (!items.length) return `「${data.item}」が未購入リストに見つかりませんでした。`;
 
-  const item = items[0] as ShoppingItem;
-  await supabase.from('shopping_list').update({ checked: true }).eq('id', item.id);
+  const item = items[0];
+  await query('UPDATE shopping_list SET checked = true WHERE id = $1', [item.id]);
   return `✅ 「${item.item}」を購入済みにしました！`;
 }
 
 export async function markRestock(userId: string, data: Record<string, unknown>): Promise<string> {
   if (!data.name) return '補充が必要な備品名を教えてください。';
 
-  const { data: existing } = await supabase
-    .from('consumables')
-    .select('id')
-    .eq('user_id', userId)
-    .ilike('name', String(data.name))
-    .limit(1);
+  const existing = await query<{ id: string }>(
+    'SELECT id FROM consumables WHERE user_id = $1 AND name ILIKE $2 LIMIT 1',
+    [userId, String(data.name)]
+  );
 
-  if (existing?.length) {
-    await supabase.from('consumables').update({ need_restock: true }).eq('id', (existing[0] as { id: string }).id);
+  if (existing.length) {
+    await query('UPDATE consumables SET need_restock = true WHERE id = $1', [existing[0].id]);
   } else {
-    const { error } = await supabase.from('consumables').insert({
-      user_id: userId,
-      name: data.name,
-      reminder_days: 0,
-      need_restock: true,
-    });
-    if (error) throw error;
+    await query(
+      'INSERT INTO consumables (user_id, name, reminder_days, need_restock) VALUES ($1, $2, 0, true)',
+      [userId, data.name]
+    );
   }
 
   const phrases = [
@@ -111,23 +92,20 @@ export async function markRestock(userId: string, data: Record<string, unknown>)
 export async function completeRestock(userId: string, data: Record<string, unknown>): Promise<string> {
   if (!data.name) return '補充した備品名を教えてください。';
 
-  const { data: items } = await supabase
-    .from('consumables')
-    .select('id, name')
-    .eq('user_id', userId)
-    .eq('need_restock', true)
-    .ilike('name', `%${data.name}%`)
-    .limit(1);
+  const items = await query<{ id: string; name: string }>(
+    'SELECT id, name FROM consumables WHERE user_id = $1 AND need_restock = true AND name ILIKE $2 LIMIT 1',
+    [userId, `%${data.name}%`]
+  );
 
-  if (!items?.length) {
+  if (!items.length) {
     return `「${data.name}」は補充リストに見つかりませんでした。`;
   }
 
-  const item = items[0] as { id: string; name: string };
-  await supabase
-    .from('consumables')
-    .update({ need_restock: false, last_purchase_date: new Date().toISOString() })
-    .eq('id', item.id);
+  const item = items[0];
+  await query(
+    'UPDATE consumables SET need_restock = false, last_purchase_date = CURRENT_DATE WHERE id = $1',
+    [item.id]
+  );
 
   const phrases = [
     `お疲れさまです！リストから消しておきますね😊`,
@@ -142,29 +120,24 @@ export async function addConsumable(userId: string, data: Record<string, unknown
 
   const reminderDays = Number(data.reminder_days) || 30;
 
-  const { error } = await supabase.from('consumables').insert({
-    user_id: userId,
-    name: data.name,
-    reminder_days: reminderDays,
-    last_purchase_date: null,
-  });
-
-  if (error) throw error;
+  await query('INSERT INTO consumables (user_id, name, reminder_days) VALUES ($1, $2, $3)', [
+    userId,
+    data.name,
+    reminderDays,
+  ]);
   return `🗂️ 消耗品を登録しました！\n\n・${data.name}\n・補充リマインド: ${reminderDays}日ごと\n\n「${data.name}を補充した」と送ると購入日を更新できます！`;
 }
 
 export async function getConsumables(userId: string): Promise<string> {
-  const { data: items, error } = await supabase
-    .from('consumables')
-    .select('*')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: true });
+  const items = await query<Consumable>(
+    'SELECT * FROM consumables WHERE user_id = $1 ORDER BY created_at ASC',
+    [userId]
+  );
 
-  if (error) throw error;
-  if (!items?.length) return '🗂️ 消耗品リストは空です。\n\n「シャンプー 補充リマインド30日」などで登録できます！';
+  if (!items.length) return '🗂️ 消耗品リストは空です。\n\n「シャンプー 補充リマインド30日」などで登録できます！';
 
   const today = new Date();
-  const list = (items as Consumable[])
+  const list = items
     .map((c) => {
       if (!c.last_purchase_date) return `・${c.name} (未購入)`;
       const last = new Date(c.last_purchase_date);

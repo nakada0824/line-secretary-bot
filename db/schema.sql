@@ -1,5 +1,5 @@
--- LINE秘書Bot DB Schema
--- Supabaseのダッシュボード > SQL Editor で実行してください
+-- LINE秘書Bot / secretary-app 共通 DB Schema（Neon）
+-- Neonのダッシュボード > SQL Editor で実行してください
 
 -- ユーザー
 CREATE TABLE IF NOT EXISTS users (
@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS consumables (
   name TEXT NOT NULL,
   reminder_days INTEGER NOT NULL DEFAULT 30,
   last_purchase_date DATE,
+  need_restock BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -106,12 +107,22 @@ CREATE TABLE IF NOT EXISTS birthdays (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 会話履歴（AI文脈保持用）
+-- 会話履歴（AI文脈保持用）。pending_scan は画像スキャン結果の一時保存
 CREATE TABLE IF NOT EXISTS conversations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-  role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+  role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'pending_scan')),
   content TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 登録アプリ（キーワード呼び出し・ポータル）
+CREATE TABLE IF NOT EXISTS apps (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  url TEXT NOT NULL,
+  keywords TEXT[] DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -126,45 +137,4 @@ CREATE INDEX IF NOT EXISTS idx_habit_logs_user ON habit_logs(user_id, logged_at 
 CREATE INDEX IF NOT EXISTS idx_memos_user ON memos(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_birthdays_user ON birthdays(user_id);
 CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id, created_at DESC);
-
--- Row Level Security (RLS) 有効化
-ALTER TABLE users ENABLE ROW LEVEL SECURITY;
-ALTER TABLE schedules ENABLE ROW LEVEL SECURITY;
-ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
-ALTER TABLE shopping_list ENABLE ROW LEVEL SECURITY;
-ALTER TABLE consumables ENABLE ROW LEVEL SECURITY;
-ALTER TABLE habits ENABLE ROW LEVEL SECURITY;
-ALTER TABLE habit_logs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE memos ENABLE ROW LEVEL SECURITY;
-ALTER TABLE templates ENABLE ROW LEVEL SECURITY;
-ALTER TABLE birthdays ENABLE ROW LEVEL SECURITY;
-ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
-
--- ── Row Level Security ポリシー ────────────────────────────────────────────────
--- サーバーサイドは SUPABASE_SERVICE_ROLE_KEY を使用するため RLS をバイパスする。
--- 以下のポリシーは anon / authenticated ロールからの直接アクセスを全て拒否し、
--- 万が一 API キーが漏洩した場合でもデータを保護する。
-
-DO $$
-DECLARE
-  tbl TEXT;
-BEGIN
-  FOREACH tbl IN ARRAY ARRAY[
-    'users','schedules','tasks','shopping_list','consumables',
-    'habits','habit_logs','memos','templates','birthdays','conversations'
-  ]
-  LOOP
-    EXECUTE format(
-      'DROP POLICY IF EXISTS deny_all_public ON %I;
-       CREATE POLICY deny_all_public ON %I AS RESTRICTIVE
-         FOR ALL TO public USING (false) WITH CHECK (false);',
-      tbl, tbl
-    );
-  END LOOP;
-END $$;
-
--- 確認クエリ（SQL Editor で実行して全テーブルに deny_all_public が付いているか検証）
--- SELECT schemaname, tablename, policyname, permissive, roles, cmd
--- FROM pg_policies
--- WHERE schemaname = 'public'
--- ORDER BY tablename;
+CREATE INDEX IF NOT EXISTS idx_apps_user ON apps(user_id, created_at);

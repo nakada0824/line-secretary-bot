@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { query } from '@/lib/db';
 import { Task } from '@/types';
 
 const PRIORITY: Record<number, string> = { 1: '最低', 2: '低', 3: '中', 4: '高', 5: '最高' };
@@ -14,19 +14,10 @@ export async function addTask(userId: string, data: Record<string, unknown>): Pr
 
   const priority = Number(data.priority) || 3;
 
-  const { error } = await supabase.from('tasks').insert({
-    user_id: userId,
-    title: data.title,
-    description: data.description ?? null,
-    priority,
-    deadline: data.deadline ?? null,
-    completed: false,
-    reminded_week: false,
-    reminded_3days: false,
-    reminded_1day: false,
-  });
-
-  if (error) throw error;
+  await query(
+    'INSERT INTO tasks (user_id, title, description, priority, deadline) VALUES ($1, $2, $3, $4, $5)',
+    [userId, data.title, data.description ?? null, priority, data.deadline ?? null]
+  );
 
   let reply = `✅ タスクを追加しました！\n\n📌 ${data.title}\n⚡ 優先度: ${PRIORITY[priority]}`;
   if (data.deadline) {
@@ -42,24 +33,19 @@ export async function addTask(userId: string, data: Record<string, unknown>): Pr
 }
 
 export async function getTasks(userId: string, data: Record<string, unknown>): Promise<string> {
-  let query = supabase
-    .from('tasks')
-    .select('*')
-    .eq('user_id', userId)
-    .order('priority', { ascending: false })
-    .order('deadline', { ascending: true, nullsFirst: false });
+  // null = 完了・未完了の両方
+  const completed = data.filter === 'completed' ? true : data.filter === 'all' ? null : false;
+  const tasks = await query<Task>(
+    `SELECT * FROM tasks
+     WHERE user_id = $1 AND ($2::boolean IS NULL OR completed = $2)
+     ORDER BY priority DESC, deadline ASC NULLS LAST
+     LIMIT 20`,
+    [userId, completed]
+  );
 
-  if (data.filter === 'completed') {
-    query = query.eq('completed', true);
-  } else if (data.filter !== 'all') {
-    query = query.eq('completed', false);
-  }
+  if (!tasks.length) return '📋 タスクはありません。\n\n「〇〇のタスク追加 優先度4 締め切り来週金曜」などで追加できます！';
 
-  const { data: tasks, error } = await query.limit(20);
-  if (error) throw error;
-  if (!tasks?.length) return '📋 タスクはありません。\n\n「〇〇のタスク追加 優先度4 締め切り来週金曜」などで追加できます！';
-
-  const list = (tasks as Task[])
+  const list = tasks
     .map((t) => {
       const icon = t.completed ? '✅' : '⬜';
       const p = PRIORITY[t.priority] ?? '中';
@@ -83,22 +69,15 @@ export async function getTasks(userId: string, data: Record<string, unknown>): P
 export async function completeTask(userId: string, data: Record<string, unknown>): Promise<string> {
   if (!data.query) return '完了するタスク名を教えてください。';
 
-  const { data: tasks, error } = await supabase
-    .from('tasks')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('completed', false)
-    .ilike('title', `%${data.query}%`)
-    .limit(1);
+  const tasks = await query<Task>(
+    'SELECT * FROM tasks WHERE user_id = $1 AND completed = false AND title ILIKE $2 LIMIT 1',
+    [userId, `%${data.query}%`]
+  );
 
-  if (error) throw error;
-  if (!tasks?.length) return `「${data.query}」に該当する未完了タスクが見つかりませんでした。`;
+  if (!tasks.length) return `「${data.query}」に該当する未完了タスクが見つかりませんでした。`;
 
-  const task = tasks[0] as Task;
-  await supabase
-    .from('tasks')
-    .update({ completed: true, completed_at: new Date().toISOString() })
-    .eq('id', task.id);
+  const task = tasks[0];
+  await query('UPDATE tasks SET completed = true, completed_at = NOW() WHERE id = $1', [task.id]);
 
   const msg = ENCOURAGE[Math.floor(Math.random() * ENCOURAGE.length)];
   return `${msg}\n\n「${task.title}」を達成しました！`;
@@ -107,17 +86,14 @@ export async function completeTask(userId: string, data: Record<string, unknown>
 export async function deleteTask(userId: string, data: Record<string, unknown>): Promise<string> {
   if (!data.query) return '削除するタスク名を教えてください。';
 
-  const { data: tasks, error } = await supabase
-    .from('tasks')
-    .select('*')
-    .eq('user_id', userId)
-    .ilike('title', `%${data.query}%`)
-    .limit(1);
+  const tasks = await query<Task>(
+    'SELECT * FROM tasks WHERE user_id = $1 AND title ILIKE $2 LIMIT 1',
+    [userId, `%${data.query}%`]
+  );
 
-  if (error) throw error;
-  if (!tasks?.length) return `「${data.query}」に該当するタスクが見つかりませんでした。`;
+  if (!tasks.length) return `「${data.query}」に該当するタスクが見つかりませんでした。`;
 
-  const task = tasks[0] as Task;
-  await supabase.from('tasks').delete().eq('id', task.id);
+  const task = tasks[0];
+  await query('DELETE FROM tasks WHERE id = $1', [task.id]);
   return `🗑️ タスクを削除しました\n\n「${task.title}」`;
 }

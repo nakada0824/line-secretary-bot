@@ -49,8 +49,7 @@ export function logError(
 const REQUIRED_ENV = [
   'LINE_CHANNEL_SECRET',
   'LINE_CHANNEL_ACCESS_TOKEN',
-  'SUPABASE_URL',
-  'SUPABASE_SERVICE_ROLE_KEY',
+  'DATABASE_URL',
   'ANTHROPIC_API_KEY',
 ] as const;
 
