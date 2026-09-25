@@ -3,6 +3,7 @@ import { pushMessage, textMessage } from '@/lib/line';
 import { generateEveningMessage, generateWeeklySummary } from '@/lib/claude';
 import { listEvents, type CalendarEvent } from '@/lib/icloud';
 import { jstDayRange, jstWeekday } from '@/lib/jst';
+import { iphoneCalendarUrl } from '@/lib/calendar-link';
 import { isCalendarOwner, fmtEventTime } from '@/lib/handlers/schedule';
 import { Task, ShoppingItem, Habit } from '@/types';
 
@@ -211,8 +212,8 @@ export async function getMorningReport(userId: string): Promise<string> {
 
   // ── カレンダーリンク ──
   lines.push('');
-  lines.push('📅 カレンダーで詳しく見る');
-  lines.push('https://secretary-app-bay.vercel.app/calendar');
+  lines.push('📱 カレンダーを開く');
+  lines.push(iphoneCalendarUrl());
 
   return lines.join('\n');
 }
@@ -373,52 +374,50 @@ async function runScheduleReminders(): Promise<void> {
 }
 
 async function checkTaskReminders(userId: string, now: Date): Promise<void> {
-  const jst = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
-
-  const in1d = new Date(jst);
-  in1d.setDate(in1d.getDate() + 1);
-  in1d.setHours(23, 59, 59, 999);
-
-  const in3d = new Date(jst);
-  in3d.setDate(in3d.getDate() + 3);
-  in3d.setHours(23, 59, 59, 999);
-
-  const in7d = new Date(jst);
-  in7d.setDate(in7d.getDate() + 7);
-  in7d.setHours(23, 59, 59, 999);
+  // 締め切りが「◯日後の終わり」までに入ったら、その段階のリマインドを1回だけ送る
+  const endOfDay = (days: number) => jstDayRange(now, days).end;
+  const in1d = endOfDay(1);
+  const in2d = endOfDay(2);
+  const in3d = endOfDay(3);
+  const in7d = endOfDay(7);
 
   type TaskRow = { id: string; title: string; deadline?: string };
+  type Flag = 'reminded_week' | 'reminded_3days' | 'reminded_2days' | 'reminded_1day';
 
-  const claim = (flag: 'reminded_week' | 'reminded_3days' | 'reminded_1day', from: Date, to: Date) =>
+  const claim = (flag: Flag, from: Date, to: Date) =>
     query<TaskRow>(
       `UPDATE tasks SET ${flag} = true
        WHERE user_id = $1 AND completed = false AND ${flag} = false
-         AND deadline >= $2 AND deadline <= $3
+         AND deadline > $2 AND deadline <= $3
        RETURNING id, title, deadline`,
       [userId, from.toISOString(), to.toISOString()]
     );
 
-  const [week, three, one] = await Promise.all([
+  const [week, three, two, one] = await Promise.all([
     claim('reminded_week', in3d, in7d),
-    claim('reminded_3days', in1d, in3d),
+    claim('reminded_3days', in2d, in3d),
+    claim('reminded_2days', in1d, in2d),
     claim('reminded_1day', now, in1d),
   ]);
 
-  for (const t of week) {
-    const dl = new Date(t.deadline!).toLocaleDateString('ja-JP', {
+  const fmtDeadline = (t: TaskRow) =>
+    new Date(t.deadline!).toLocaleDateString('ja-JP', {
       month: 'numeric', day: 'numeric', weekday: 'short', timeZone: 'Asia/Tokyo',
     });
-    await pushMessage(userId, [textMessage(`📋 タスクリマインド（1週間前）\n\n「${t.title}」\n📆 締め切り: ${dl}\n\n計画的に進めましょう！`)]);
+
+  for (const t of week) {
+    await pushMessage(userId, [textMessage(`📋 タスクリマインド（1週間前）\n\n「${t.title}」\n📆 締め切り: ${fmtDeadline(t)}\n\n計画的に進めましょう！`)]);
   }
 
   for (const t of three) {
-    const dl = new Date(t.deadline!).toLocaleDateString('ja-JP', {
-      month: 'numeric', day: 'numeric', timeZone: 'Asia/Tokyo',
-    });
-    await pushMessage(userId, [textMessage(`⚠️ タスクリマインド（3日前）\n\n「${t.title}」\n📆 締め切り: ${dl}\n\nそろそろ本格的に取り組みましょう！`)]);
+    await pushMessage(userId, [textMessage(`⚠️ タスクリマインド（3日前）\n\n「${t.title}」\n📆 締め切り: ${fmtDeadline(t)}\n\nそろそろ本格的に取り組みましょう！`)]);
+  }
+
+  for (const t of two) {
+    await pushMessage(userId, [textMessage(`⚠️ タスクリマインド（2日前）\n\n「${t.title}」\n📆 締め切り: ${fmtDeadline(t)}\n\nあと2日です、仕上げに入りましょう！`)]);
   }
 
   for (const t of one) {
-    await pushMessage(userId, [textMessage(`🔴 タスクリマインド（前日・当日）\n\n「${t.title}」\n\n締め切りが迫っています！頑張れ！💪`)]);
+    await pushMessage(userId, [textMessage(`🔴 タスクリマインド（前日・当日）\n\n「${t.title}」\n📆 締め切り: ${fmtDeadline(t)}\n\n締め切りが迫っています！頑張れ！💪`)]);
   }
 }

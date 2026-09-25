@@ -38,6 +38,12 @@ export interface EventInput {
 
 export class CalendarError extends Error {}
 
+// 新しく入れる予定に付ける iPhone の通知
+// 時刻ありの予定：3日前・2日前・1日前・1時間前・30分前（分）
+export const TIMED_ALARM_MINUTES = [3 * 1440, 2 * 1440, 1440, 60, 30] as const;
+// 終日の予定：3日前・2日前・前日の朝9時
+export const ALL_DAY_ALARM_DAYS = [3, 2, 1] as const;
+
 export function isWritableCalendar(name: unknown): name is WritableCalendar {
   return WRITABLE_CALENDARS.includes(name as WritableCalendar);
 }
@@ -338,15 +344,16 @@ export function buildNewEvent(
   setText(vevent, 'location', input.location);
   setText(vevent, 'description', input.description);
 
-  // 終日予定には「◯分前」の通知を付けない
-  if (!input.all_day) {
-    for (const min of alarmMinutes) {
-      const alarm = new ICAL.Component('valarm');
-      alarm.updatePropertyWithValue('action', 'DISPLAY');
-      alarm.updatePropertyWithValue('description', input.title);
-      alarm.updatePropertyWithValue('trigger', ICAL.Duration.fromSeconds(-min * 60));
-      vevent.addSubcomponent(alarm);
-    }
+  // 終日予定は開始（0:00）基準なので「◯日前の9時」にする
+  const triggers = input.all_day
+    ? ALL_DAY_ALARM_DAYS.map((d) => d * 1440 - 9 * 60)
+    : alarmMinutes;
+  for (const min of triggers) {
+    const alarm = new ICAL.Component('valarm');
+    alarm.updatePropertyWithValue('action', 'DISPLAY');
+    alarm.updatePropertyWithValue('description', input.title);
+    alarm.updatePropertyWithValue('trigger', ICAL.Duration.fromSeconds(-min * 60));
+    vevent.addSubcomponent(alarm);
   }
   vcal.addSubcomponent(vevent);
   return vcal;
@@ -356,7 +363,7 @@ export function buildNewEvent(
 export async function createEvent(
   calendarName: WritableCalendar,
   input: EventInput,
-  alarmMinutes: readonly number[] = [60, 30]
+  alarmMinutes: readonly number[] = TIMED_ALARM_MINUTES
 ): Promise<CalendarEvent> {
   if (!isWritableCalendar(calendarName)) throw new CalendarError(`「${calendarName}」には書き込めません`);
   const client = await getClient();

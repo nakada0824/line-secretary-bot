@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   completed_at TIMESTAMPTZ,
   reminded_week BOOLEAN DEFAULT FALSE,
   reminded_3days BOOLEAN DEFAULT FALSE,
+  reminded_2days BOOLEAN DEFAULT FALSE,
   reminded_1day BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -139,7 +140,7 @@ CREATE TABLE IF NOT EXISTS event_reminders (
 CREATE INDEX IF NOT EXISTS idx_schedules_user_start ON schedules(user_id, start_time);
 CREATE INDEX IF NOT EXISTS idx_schedules_reminders ON schedules(reminded_1h, reminded_30m, start_time);
 CREATE INDEX IF NOT EXISTS idx_tasks_user ON tasks(user_id, completed, deadline);
-CREATE INDEX IF NOT EXISTS idx_tasks_reminders ON tasks(reminded_week, reminded_3days, reminded_1day, deadline);
+CREATE INDEX IF NOT EXISTS idx_tasks_reminders ON tasks(reminded_week, reminded_3days, reminded_2days, reminded_1day, deadline);
 CREATE INDEX IF NOT EXISTS idx_shopping_user ON shopping_list(user_id, checked);
 CREATE INDEX IF NOT EXISTS idx_habits_user ON habits(user_id);
 CREATE INDEX IF NOT EXISTS idx_habit_logs_user ON habit_logs(user_id, logged_at DESC);

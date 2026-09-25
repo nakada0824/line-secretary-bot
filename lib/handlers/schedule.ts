@@ -15,6 +15,7 @@ import {
   type WritableCalendar,
 } from '@/lib/icloud';
 import { jstDayRange } from '@/lib/jst';
+import { iphoneCalendarUrl } from '@/lib/calendar-link';
 
 export const CONFIRM_YES = /^(はい|yes|登録(して)?|ok|OK|オッケー|お願い(します?)?|よろしく)[!！。\s]*$/i;
 export const CONFIRM_NO  = /^(いいえ|no|キャンセル|やめ(る|て|ます)?|不要|取消|取り消し)[!！。\s]*$/i;
@@ -95,7 +96,10 @@ async function registerEvent(calendar: WritableCalendar, input: EventInput): Pro
   let reply = `📅 ${calendar}のカレンダーに入れました！\n\n📌 ${ev.title}\n🗓 ${fmtDate(ev.start_time)} ${fmtEventTime(ev)}`;
   if (ev.location) reply += `\n📍 ${ev.location}`;
   if (ev.description) reply += `\n📝 ${ev.description}`;
-  if (!ev.all_day) reply += '\n🔔 1時間前と30分前にiPhoneで通知します';
+  reply += ev.all_day
+    ? '\n🔔 3日前・2日前・前日の朝9時にiPhoneで通知します'
+    : '\n🔔 3日前・2日前・前日・1時間前・30分前にiPhoneで通知します';
+  reply += `\n\n📱 カレンダーで見る\n${iphoneCalendarUrl(ev.start_time)}`;
   return reply;
 }
 
@@ -139,7 +143,8 @@ export async function getSchedules(userId: string, data: Record<string, unknown>
 
   return withCalendarErrors(async () => {
     const events = await listEvents(from, to);
-    if (!events.length) return `📅 ${label}の予定はありません。\n\n「明日14時に会議を職場に」などと送ると追加できます！`;
+    const link = `📱 カレンダーを開く\n${iphoneCalendarUrl(from)}`;
+    if (!events.length) return `📅 ${label}の予定はありません。\n\n「明日14時に会議を職場に」などと送ると追加できます！\n\n${link}`;
 
     const multiDay = data.date === 'week';
     const list = events
@@ -148,7 +153,7 @@ export async function getSchedules(userId: string, data: Record<string, unknown>
         return `・${when} ${e.title}${e.location ? ` 📍${e.location}` : ''}［${e.calendar}］`;
       })
       .join('\n');
-    return `📅 ${label}の予定（${events.length}件）\n\n${list}`;
+    return `📅 ${label}の予定（${events.length}件）\n\n${list}\n\n${link}`;
   });
 }
 
@@ -289,6 +294,6 @@ export async function handlePendingScanReply(userId: string, message: string): P
       }
     }
     const failed = targets.length - registered;
-    return `✅ ${calendar}のカレンダーに${registered}件の予定を登録しました！${failed ? `\n⚠️ ${failed}件は登録できませんでした` : ''}\n\n📱 iPhoneのカレンダーで確認できます`;
+    return `✅ ${calendar}のカレンダーに${registered}件の予定を登録しました！${failed ? `\n⚠️ ${failed}件は登録できませんでした` : ''}\n\n📱 カレンダーで見る\n${iphoneCalendarUrl(targets[0].start_time!)}`;
   });
 }

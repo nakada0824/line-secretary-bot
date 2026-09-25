@@ -3,6 +3,7 @@
  * 高確信度のパターンのみマッチさせる。曖昧な場合は null を返して Claude に委ねる。
  */
 import type { IntentResult } from '@/types';
+import { iphoneCalendarUrl } from '@/lib/calendar-link';
 
 // 日本語の疑問・依頼末尾表現
 const ASK = /[はがをにで]?(教えて|見せて|確認|一覧|リスト|ある[かな？?]?|どう[？?]?|何[？?]?|は[？?]|を?見たい|調べて|知りたい)/;
@@ -114,8 +115,10 @@ const BASE = 'https://secretary-app-bay.vercel.app';
 
 function tryOpenWebApp(m: string): IntentResult | null {
   const s = m.replace(/[！？。\s]+$/, '');
-  if (/^(カレンダー|カレンダーを?開いて|予定(を?|が?)見たい)$/.test(s))
-    return { intent: 'OPEN_WEB_APP', data: { url: `${BASE}/calendar`, label: 'カレンダー' } };
+  if (/^((iPhoneの|アイフォンの)?カレンダー((を|だ)?(開いて|出して|見せて|ちょうだい|見たい))?|予定(を?|が?)見たい)$/i.test(s))
+    return { intent: 'OPEN_WEB_APP', data: { url: iphoneCalendarUrl(), label: 'iPhoneのカレンダー' } };
+  if (/^(web|ウェブ)の?カレンダー(を?開いて)?$/i.test(s))
+    return { intent: 'OPEN_WEB_APP', data: { url: `${BASE}/calendar`, label: 'Webのカレンダー' } };
   if (/^(タスク|タスクを?見たい|タスク一覧)$/.test(s))
     return { intent: 'OPEN_WEB_APP', data: { url: `${BASE}/tasks`, label: 'タスク一覧' } };
   if (/^(買い物|買い物リスト|備品|買い物(を?|が?)見たい)$/.test(s))

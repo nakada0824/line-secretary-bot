@@ -72,6 +72,7 @@ export interface Task {
   completed_at?: string;
   reminded_week: boolean;
   reminded_3days: boolean;
+  reminded_2days: boolean;
   reminded_1day: boolean;
   created_at: string;
 }
