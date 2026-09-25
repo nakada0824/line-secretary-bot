@@ -1,6 +1,5 @@
 import { NextRequest } from 'next/server';
-import { getAllUsers } from '@/lib/db';
-import { runBackgroundReminders } from '@/lib/handlers/report';
+import { runAllReminders } from '@/lib/handlers/report';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -12,9 +11,6 @@ export async function GET(request: NextRequest): Promise<Response> {
     return new Response(null, { status: 401 });
   }
 
-  const users = await getAllUsers();
-  for (const u of users) {
-    await runBackgroundReminders(u.user_id);
-  }
-  return Response.json({ checked: users.length });
+  const { users } = await runAllReminders();
+  return Response.json({ checked: users });
 }

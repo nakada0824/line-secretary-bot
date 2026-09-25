@@ -2,6 +2,7 @@ export type Intent =
   | 'ADD_SCHEDULE'
   | 'GET_SCHEDULES'
   | 'DELETE_SCHEDULE'
+  | 'UPDATE_SCHEDULE'
   | 'ADD_TASK'
   | 'GET_TASKS'
   | 'COMPLETE_TASK'

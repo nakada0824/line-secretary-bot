@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { query } from '@/lib/db';
+import { listCalendarNames, READABLE_CALENDARS } from '@/lib/icloud';
 import Anthropic from '@anthropic-ai/sdk';
 import { logSecurity } from '@/lib/security';
 
@@ -29,7 +30,18 @@ export async function GET(request: NextRequest): Promise<Response> {
     results.database = { ok: false, detail: String(e) };
   }
 
-  // 2. Anthropic API 接続確認
+  // 2. iCloud カレンダー接続確認
+  try {
+    const names = await listCalendarNames();
+    const missing = READABLE_CALENDARS.filter((n) => !names.includes(n));
+    results.icloud = missing.length
+      ? { ok: false, detail: `見つからないカレンダー: ${missing.join(', ')}` }
+      : { ok: true };
+  } catch (e) {
+    results.icloud = { ok: false, detail: String(e) };
+  }
+
+  // 3. Anthropic API 接続確認
   try {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const res    = await client.messages.create({
@@ -42,7 +54,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     results.anthropic = { ok: false, detail: String(e) };
   }
 
-  // 3. LINE アクセストークン確認
+  // 4. LINE アクセストークン確認
   try {
     const res = await fetch('https://api.line.me/v2/bot/info', {
       headers: { Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}` },
@@ -57,11 +69,14 @@ export async function GET(request: NextRequest): Promise<Response> {
     results.line = { ok: false, detail: String(e) };
   }
 
-  // 4. 環境変数の存在確認（値は表示しない）
+  // 5. 環境変数の存在確認（値は表示しない）
   const envKeys = [
     'LINE_CHANNEL_SECRET',
     'LINE_CHANNEL_ACCESS_TOKEN',
     'DATABASE_URL',
+    'ICLOUD_USERNAME',
+    'ICLOUD_APP_PASSWORD',
+    'WEB_USER_ID',
     'ANTHROPIC_API_KEY',
     'HEALTH_CHECK_SECRET',
   ];

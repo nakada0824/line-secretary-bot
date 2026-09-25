@@ -1,23 +1,11 @@
 import { NextRequest } from 'next/server';
-import { query } from '@/lib/db';
+import { listEvents, type CalendarEvent } from '@/lib/icloud';
+import { jstDayRange } from '@/lib/jst';
+import { fmtEventTime } from '@/lib/handlers/schedule';
 import { pushMessage, textMessage } from '@/lib/line';
-import { Schedule } from '@/types';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
-
-function jstNow() {
-  return new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
-}
-
-function dayRange(base: Date, offsetDays: number): { start: string; end: string } {
-  const start = new Date(base);
-  start.setDate(start.getDate() + offsetDays);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(start);
-  end.setHours(23, 59, 59, 999);
-  return { start: start.toISOString(), end: end.toISOString() };
-}
 
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString('ja-JP', {
@@ -28,14 +16,11 @@ function fmtDate(iso: string): string {
   });
 }
 
-function fmtTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('ja-JP', {
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZone: 'Asia/Tokyo',
-  });
+function line(e: CalendarEvent, prefix: string): string {
+  return `・${prefix} ${fmtEventTime(e)} ${e.title}${e.location ? `（${e.location}）` : ''}`;
 }
 
+// 毎朝7時（vercel.json の Cron）に今日・明日・3日後の予定を iCloud から送る
 export async function GET(request: NextRequest): Promise<Response> {
   const authHeader = request.headers.get('authorization');
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -48,24 +33,21 @@ export async function GET(request: NextRequest): Promise<Response> {
     return Response.json({ error: 'WEB_USER_ID not configured' }, { status: 500 });
   }
 
-  const now = jstNow();
-  const todayRange   = dayRange(now, 0);
-  const tomorrowRange = dayRange(now, 1);
-  const in3dRange    = dayRange(now, 3);
+  const now = new Date();
+  const today = jstDayRange(now, 0);
+  const tomorrow = jstDayRange(now, 1);
+  const in3d = jstDayRange(now, 3);
 
-  const schedulesIn = (range: { start: string; end: string }) =>
-    query<Schedule>(
-      `SELECT id, title, start_time, location FROM schedules
-       WHERE user_id = $1 AND start_time >= $2 AND start_time <= $3
-       ORDER BY start_time`,
-      [userId, range.start, range.end]
-    );
+  const events = await listEvents(today.start, in3d.end);
+  const on = (range: { start: Date; end: Date }) =>
+    events.filter((e) => {
+      const s = new Date(e.start_time);
+      return s >= range.start && s < range.end;
+    });
 
-  const [todayScheds, tomorrowScheds, in3dScheds] = await Promise.all([
-    schedulesIn(todayRange),
-    schedulesIn(tomorrowRange),
-    schedulesIn(in3dRange),
-  ]);
+  const todayScheds = on(today);
+  const tomorrowScheds = on(tomorrow);
+  const in3dScheds = on(in3d);
 
   if (!todayScheds.length && !tomorrowScheds.length && !in3dScheds.length) {
     return Response.json({ sent: false, reason: 'no schedules' });
@@ -78,25 +60,19 @@ export async function GET(request: NextRequest): Promise<Response> {
   if (in3dScheds.length > 0) {
     lines.push('');
     lines.push('【3日後】');
-    for (const s of in3dScheds) {
-      lines.push(`・${fmtDate(s.start_time)} ${fmtTime(s.start_time)} ${s.title}${s.location ? `（${s.location}）` : ''}`);
-    }
+    for (const e of in3dScheds) lines.push(line(e, fmtDate(e.start_time)));
   }
 
   if (tomorrowScheds.length > 0) {
     lines.push('');
     lines.push('【明日】');
-    for (const s of tomorrowScheds) {
-      lines.push(`・${fmtDate(s.start_time)} ${fmtTime(s.start_time)} ${s.title}${s.location ? `（${s.location}）` : ''}`);
-    }
+    for (const e of tomorrowScheds) lines.push(line(e, fmtDate(e.start_time)));
   }
 
   if (todayScheds.length > 0) {
     lines.push('');
     lines.push('【本日】');
-    for (const s of todayScheds) {
-      lines.push(`・本日 ${fmtTime(s.start_time)} ${s.title}${s.location ? `（${s.location}）` : ''}`);
-    }
+    for (const e of todayScheds) lines.push(line(e, '本日'));
   }
 
   await pushMessage(userId, [textMessage(lines.join('\n'))]);

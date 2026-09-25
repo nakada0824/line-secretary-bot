@@ -1,7 +1,10 @@
-import { query, getUserDisplayName, getUser } from '@/lib/db';
+import { query, getUserDisplayName, getUser, getAllUsers, claimEventReminder, cleanupEventReminders } from '@/lib/db';
 import { pushMessage, textMessage } from '@/lib/line';
 import { generateEveningMessage, generateWeeklySummary } from '@/lib/claude';
-import { Schedule, Task, ShoppingItem, Habit } from '@/types';
+import { listEvents, type CalendarEvent } from '@/lib/icloud';
+import { jstDayRange, jstWeekday } from '@/lib/jst';
+import { isCalendarOwner, fmtEventTime } from '@/lib/handlers/schedule';
+import { Task, ShoppingItem, Habit } from '@/types';
 
 // 朝の一言（Claude API不要・曜日ベースでローテーション）
 const MORNING_ONE_LINERS = [
@@ -15,7 +18,7 @@ const MORNING_ONE_LINERS = [
 ];
 
 function pickOneLiner(): string {
-  return MORNING_ONE_LINERS[new Date().getDay()];
+  return MORNING_ONE_LINERS[jstWeekday()];
 }
 
 const PRIORITY_LABEL: Record<number, string> = { 1: '最低', 2: '低', 3: '中', 4: '高', 5: '最高' };
@@ -24,71 +27,64 @@ function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' });
 }
 
-function fmtTimeOrAllDay(iso: string): string {
-  const t = fmtTime(iso);
-  return t === '00:00' ? '終日' : t;
-}
-
 function fmtDateShort(iso: string) {
   const d = new Date(new Date(iso).toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
   const weekday = ['日', '月', '火', '水', '木', '金', '土'][d.getDay()];
   return `${d.getMonth() + 1}/${d.getDate()}(${weekday})`;
 }
 
-function jstNow() {
-  return new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+// iCloud の予定。中田さん以外は空、読み込めなければ null（レポートの他の部分は出す）
+async function calendarEvents(userId: string, from: Date, to: Date): Promise<CalendarEvent[] | null> {
+  if (!isCalendarOwner(userId)) return [];
+  try {
+    return await listEvents(from, to);
+  } catch (e) {
+    console.error('[report calendar error]', e);
+    return null;
+  }
+}
+
+const CALENDAR_UNAVAILABLE = '（カレンダーを読み込めませんでした）';
+
+function eventLine(e: CalendarEvent, withDate: boolean): string {
+  const when = withDate ? `${fmtDateShort(e.start_time)} ${fmtEventTime(e)}` : fmtEventTime(e);
+  return `・${when} ${e.title}${e.location ? `（${e.location}）` : ''}`;
 }
 
 // ───────────────────────────── 朝のレポート（「おはよう」トリガー）─────────────────────────────
 
 export async function getMorningReport(userId: string): Promise<string> {
   const user = await getUser(userId);
-  const now = jstNow();
+  const now = new Date();
 
-  const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
-  const todayEnd   = new Date(now); todayEnd.setHours(23, 59, 59, 999);
+  const { start: todayStart, end: todayEnd } = jstDayRange(now);
 
-  // 今週末（日曜）23:59:59 を計算（月〜日を1週間とする）
-  const dow = now.getDay(); // 0=日, 1=月, ..., 6=土
+  // 今週末（日曜）の終わりまで（月〜日を1週間とする）
+  const dow = jstWeekday(now); // 0=日, 1=月, ..., 6=土
   const daysUntilSunday = dow === 0 ? 0 : 7 - dow;
-  const weekEnd = new Date(now);
-  weekEnd.setDate(weekEnd.getDate() + daysUntilSunday);
-  weekEnd.setHours(23, 59, 59, 999);
+  const weekEnd = jstDayRange(now, daysUntilSunday).end;
 
   const [
-    todayScheds,
-    weekScheds,
+    weekEvents,
     todayTasks,
     weekTasks,
     importantTasks,
     shoppingItems,
     restockItems,
   ] = await Promise.all([
-    // 今日の予定（時間順）
-    query<Schedule>(
-      `SELECT id, title, start_time, location FROM schedules
-       WHERE user_id = $1 AND start_time >= $2 AND start_time <= $3
-       ORDER BY start_time`,
-      [userId, todayStart.toISOString(), todayEnd.toISOString()]
-    ),
-    // 今週の予定（今日〜今週末）
-    query<Schedule>(
-      `SELECT id, title, start_time, location FROM schedules
-       WHERE user_id = $1 AND start_time >= $2 AND start_time <= $3
-       ORDER BY start_time`,
-      [userId, todayStart.toISOString(), weekEnd.toISOString()]
-    ),
+    // 今日〜今週末の予定（iCloud）
+    calendarEvents(userId, todayStart, weekEnd),
     // 今日締め切りのタスク
     query<Task>(
       `SELECT id, title, priority, deadline FROM tasks
-       WHERE user_id = $1 AND completed = false AND deadline IS NOT NULL AND deadline <= $2
+       WHERE user_id = $1 AND completed = false AND deadline IS NOT NULL AND deadline < $2
        ORDER BY priority DESC`,
       [userId, todayEnd.toISOString()]
     ),
     // 今週締め切りのタスク（明日〜今週末）
     query<Task>(
       `SELECT id, title, priority, deadline FROM tasks
-       WHERE user_id = $1 AND completed = false AND deadline > $2 AND deadline <= $3
+       WHERE user_id = $1 AND completed = false AND deadline >= $2 AND deadline < $3
        ORDER BY deadline`,
       [userId, todayEnd.toISOString(), weekEnd.toISOString()]
     ),
@@ -113,6 +109,8 @@ export async function getMorningReport(userId: string): Promise<string> {
     ),
   ]);
 
+  const todayScheds = weekEvents?.filter((e) => new Date(e.start_time) < todayEnd) ?? null;
+
   // 今日・今週締め切りに既出のタスクIDを除外して重複を防ぐ
   const shownTaskIds = new Set([
     ...todayTasks.map((t) => t.id),
@@ -124,7 +122,7 @@ export async function getMorningReport(userId: string): Promise<string> {
 
   // ── ヘッダー ──
   const dateLabel = now.toLocaleDateString('ja-JP', {
-    year: 'numeric', month: 'long', day: 'numeric', weekday: 'long',
+    year: 'numeric', month: 'long', day: 'numeric', weekday: 'long', timeZone: 'Asia/Tokyo',
   });
   lines.push(`おはようございます、中田さん！☀️`);
   lines.push(dateLabel);
@@ -132,23 +130,23 @@ export async function getMorningReport(userId: string): Promise<string> {
   // ── 今日の予定 ──
   lines.push('');
   lines.push('━━━ 📅 今日の予定 ━━━');
-  if (todayScheds.length === 0) {
+  if (!todayScheds) {
+    lines.push(CALENDAR_UNAVAILABLE);
+  } else if (todayScheds.length === 0) {
     lines.push('（予定なし）');
   } else {
-    for (const s of todayScheds) {
-      lines.push(`・${fmtTime(s.start_time)} ${s.title}${s.location ? `（${s.location}）` : ''}`);
-    }
+    for (const e of todayScheds) lines.push(eventLine(e, false));
   }
 
   // ── 今週の予定（今日〜週末） ──
   lines.push('');
   lines.push('━━━ 📆 今週の予定 ━━━');
-  if (weekScheds.length === 0) {
+  if (!weekEvents) {
+    lines.push(CALENDAR_UNAVAILABLE);
+  } else if (weekEvents.length === 0) {
     lines.push('今週の予定はまだありません');
   } else {
-    for (const s of weekScheds) {
-      lines.push(`・${fmtDateShort(s.start_time)} ${fmtTimeOrAllDay(s.start_time)} ${s.title}${s.location ? `（${s.location}）` : ''}`);
-    }
+    for (const e of weekEvents) lines.push(eventLine(e, true));
   }
 
   // ── 要補充の備品 ──
@@ -222,29 +220,18 @@ export async function getMorningReport(userId: string): Promise<string> {
 // ───────────────────────────── 夜の振り返りレポート ─────────────────────────────
 
 export async function getEveningReport(userId: string): Promise<string> {
-  const now = jstNow();
-  const todayStart = new Date(now);
-  todayStart.setHours(0, 0, 0, 0);
-  const tomorrowStart = new Date(now);
-  tomorrowStart.setDate(tomorrowStart.getDate() + 1);
-  tomorrowStart.setHours(0, 0, 0, 0);
-  const tomorrowEnd = new Date(tomorrowStart);
-  tomorrowEnd.setHours(23, 59, 59, 999);
+  const todayStart = jstDayRange().start;
+  const tomorrow = jstDayRange(new Date(), 1);
 
   const [displayName, counts, tomorrowSchedules] = await Promise.all([
     getUserDisplayName(userId),
     countTasks(userId, todayStart),
-    query<Schedule>(
-      `SELECT title, start_time, location FROM schedules
-       WHERE user_id = $1 AND start_time >= $2 AND start_time <= $3
-       ORDER BY start_time ASC`,
-      [userId, tomorrowStart.toISOString(), tomorrowEnd.toISOString()]
-    ),
+    calendarEvents(userId, tomorrow.start, tomorrow.end),
   ]);
 
   return generateEveningMessage({
     displayName,
-    tomorrowSchedules,
+    tomorrowSchedules: tomorrowSchedules ?? [],
     completedTasks: counts.completed,
     pendingTasks: counts.pending,
   });
@@ -268,11 +255,10 @@ async function countTasks(
 // ───────────────────────────── 週次サマリー ─────────────────────────────
 
 export async function getWeeklySummaryReport(userId: string): Promise<string> {
-  const now = jstNow();
-  const weekAgo = new Date(now);
-  weekAgo.setDate(weekAgo.getDate() - 7);
-  const nextWeekEnd = new Date(now);
-  nextWeekEnd.setDate(nextWeekEnd.getDate() + 7);
+  const WEEK = 7 * 24 * 60 * 60 * 1000;
+  const now = new Date();
+  const weekAgo = new Date(now.getTime() - WEEK);
+  const nextWeekEnd = new Date(now.getTime() + WEEK);
 
   const [displayName, counts, habits, upcomingSchedules] = await Promise.all([
     getUserDisplayName(userId),
@@ -281,12 +267,7 @@ export async function getWeeklySummaryReport(userId: string): Promise<string> {
       'SELECT name, streak FROM habits WHERE user_id = $1 ORDER BY streak DESC LIMIT 5',
       [userId]
     ),
-    query<Schedule>(
-      `SELECT title, start_time FROM schedules
-       WHERE user_id = $1 AND start_time >= $2 AND start_time <= $3
-       ORDER BY start_time ASC LIMIT 5`,
-      [userId, now.toISOString(), nextWeekEnd.toISOString()]
-    ),
+    calendarEvents(userId, now, nextWeekEnd),
   ]);
 
   return generateWeeklySummary({
@@ -294,24 +275,18 @@ export async function getWeeklySummaryReport(userId: string): Promise<string> {
     completedTasks: counts.completed,
     pendingTasks: counts.pending,
     habits,
-    upcomingSchedules,
+    upcomingSchedules: (upcomingSchedules ?? []).slice(0, 5),
   });
 }
 
 // ───────────────────────────── 手動リマインド確認 ─────────────────────────────
 
 export async function getCheckReminders(userId: string): Promise<string> {
-  const now = jstNow();
-  const in24h = new Date(now);
-  in24h.setHours(in24h.getHours() + 24);
+  const now = new Date();
+  const in24h = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
-  const [schedules, tasks] = await Promise.all([
-    query<Schedule>(
-      `SELECT title, start_time, location FROM schedules
-       WHERE user_id = $1 AND start_time >= $2 AND start_time <= $3
-       ORDER BY start_time ASC LIMIT 5`,
-      [userId, now.toISOString(), in24h.toISOString()]
-    ),
+  const [events, tasks] = await Promise.all([
+    calendarEvents(userId, now, in24h),
     query<Task>(
       `SELECT title, deadline FROM tasks
        WHERE user_id = $1 AND completed = false AND deadline IS NOT NULL AND deadline <= $2
@@ -322,15 +297,12 @@ export async function getCheckReminders(userId: string): Promise<string> {
 
   const lines: string[] = [];
 
+  const schedules = (events ?? []).filter((e) => new Date(e.start_time) >= now).slice(0, 5);
+  if (!events) lines.push(`📅 ${CALENDAR_UNAVAILABLE}`);
   if (schedules.length) {
     lines.push('📅 今後24時間の予定:');
-    for (const s of schedules) {
-      const t = new Date(s.start_time).toLocaleTimeString('ja-JP', {
-        hour: '2-digit',
-        minute: '2-digit',
-        timeZone: 'Asia/Tokyo',
-      });
-      lines.push(`・${t} ${s.title}${s.location ? ` (${s.location})` : ''}`);
+    for (const e of schedules) {
+      lines.push(`・${fmtEventTime(e)} ${e.title}${e.location ? ` (${e.location})` : ''}`);
     }
   }
 
@@ -352,61 +324,51 @@ export async function getCheckReminders(userId: string): Promise<string> {
 }
 
 // ───────────────────────────── 自動バックグラウンドリマインド ─────────────────────────────
-// 5分おきの定期実行（/api/cron/reminders）とメッセージ受信時に呼ばれる。
-// 送信済みフラグを UPDATE ... RETURNING で先に立てるので、同時に動いても二重送信しない。
+// 5分おきの定期実行（/api/cron/reminders）から呼ばれる。タスクはメッセージ受信時にも確認する。
+// 送信済みの記録を先に取る（UPDATE ... RETURNING / INSERT ... ON CONFLICT）ので、同時に動いても二重送信しない。
 
-export async function runBackgroundReminders(userId: string): Promise<void> {
-  const now = new Date();
-  // 個別の失敗が全体を止めないよう allSettled で実行
+export async function runAllReminders(): Promise<{ users: number }> {
+  const users = await getAllUsers();
   await Promise.allSettled([
-    checkScheduleReminders(userId, now).catch((e) =>
-      console.error('[schedule reminder error]', e)
-    ),
-    checkTaskReminders(userId, now).catch((e) =>
-      console.error('[task reminder error]', e)
-    ),
+    runScheduleReminders().catch((e) => console.error('[schedule reminder error]', e)),
+    ...users.map((u) => runTaskReminders(u.user_id)),
+    cleanupEventReminders().catch((e) => console.error('[reminder cleanup error]', e)),
   ]);
+  return { users: users.length };
 }
 
-function fmtReminderTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('ja-JP', {
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZone: 'Asia/Tokyo',
-  });
+export async function runTaskReminders(userId: string): Promise<void> {
+  await checkTaskReminders(userId, new Date()).catch((e) =>
+    console.error('[task reminder error]', e)
+  );
 }
 
-async function checkScheduleReminders(userId: string, now: Date): Promise<void> {
+// iCloud の予定（自宅・職場・シフトボード）を中田さんに LINE でリマインド
+async function runScheduleReminders(): Promise<void> {
+  const owner = process.env.WEB_USER_ID;
+  if (!owner || !process.env.ICLOUD_USERNAME) return;
+
+  const now = new Date();
   const in35m = new Date(now.getTime() + 35 * 60 * 1000);
   const in65m = new Date(now.getTime() + 65 * 60 * 1000);
 
-  type ScheduleRow = { id: string; title: string; start_time: string; location?: string };
-
-  // 開始35分前を切ったもの → 30分前リマインド（1時間前は送らない）
-  const res30m = await query<ScheduleRow>(
-    `UPDATE schedules SET reminded_30m = true, reminded_1h = true
-     WHERE user_id = $1 AND reminded_30m = false AND start_time > $2 AND start_time <= $3
-     RETURNING id, title, start_time, location`,
-    [userId, now.toISOString(), in35m.toISOString()]
-  );
-  // 開始35〜65分前 → 1時間前リマインド
-  const res1h = await query<ScheduleRow>(
-    `UPDATE schedules SET reminded_1h = true
-     WHERE user_id = $1 AND reminded_1h = false AND start_time > $2 AND start_time <= $3
-     RETURNING id, title, start_time, location`,
-    [userId, in35m.toISOString(), in65m.toISOString()]
+  const events = (await listEvents(now, in65m)).filter(
+    (e) => !e.all_day && new Date(e.start_time) > now
   );
 
-  for (const s of res1h) {
-    await pushMessage(userId, [
-      textMessage(`⏰ 1時間前リマインド\n\n📌 ${s.title}\n🕐 ${fmtReminderTime(s.start_time)}${s.location ? `\n📍 ${s.location}` : ''}\n\n準備はいいですか？`),
-    ]);
-  }
+  for (const e of events) {
+    const start = new Date(e.start_time);
+    // 開始35分前を切ったもの → 30分前、35〜65分前 → 1時間前
+    const kind = start <= in35m ? '30m' : '1h';
+    if (!(await claimEventReminder(`${e.uid}|${e.start_time}`, kind))) continue;
 
-  for (const s of res30m) {
-    await pushMessage(userId, [
-      textMessage(`⏰ 30分前リマインド\n\n📌 ${s.title}\n🕐 ${fmtReminderTime(s.start_time)}${s.location ? `\n📍 ${s.location}` : ''}\n\nもうすぐです！`),
-    ]);
+    const t = fmtTime(e.start_time);
+    const place = e.location ? `\n📍 ${e.location}` : '';
+    const text =
+      kind === '1h'
+        ? `⏰ 1時間前リマインド\n\n📌 ${e.title}\n🕐 ${t}${place}\n\n準備はいいですか？`
+        : `⏰ 30分前リマインド\n\n📌 ${e.title}\n🕐 ${t}${place}\n\nもうすぐです！`;
+    await pushMessage(owner, [textMessage(text)]);
   }
 }
 

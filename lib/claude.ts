@@ -30,9 +30,10 @@ export async function detectIntent(
   // ── Phase 2: Claude による詳細判定 ─────────────────────────────────────────
   const systemPrompt = `{"intent":"...","data":{...}}のみ返す。説明不要。JST:${jstNow()}
 
-ADD_SCHEDULE:{title,start_time(ISO+09:00),end_time?,location?,description?}
+ADD_SCHEDULE:{title,start_time(ISO+09:00),end_time?,all_day?,location?,description?,calendar?:"職場"|"自宅"(「職場に」「自宅に」等で明示された時だけ)}
 GET_SCHEDULES:{date?:"today"|"tomorrow"|"week"}
 DELETE_SCHEDULE:{query}
+UPDATE_SCHEDULE:{query(今の予定名),title?,start_time?,end_time?,location?}(変更後の値だけ)
 ADD_TASK:{title,priority?(1-5),deadline?(ISO),description?}
 GET_TASKS:{filter?:"all"|"pending"|"completed"}
 COMPLETE_TASK:{query} / DELETE_TASK:{query}
@@ -46,7 +47,7 @@ ADD_BIRTHDAY:{name,birth_date(YYYY-MM-DD)} / GET_BIRTHDAYS:{}
 ADD_APP:{name,url,keywords?:[]} / GET_APPS:{} / DELETE_APP:{name} / UPDATE_APP:{name,url?,keywords?:[]}
 MORNING_REPORT:{} / EVENING_REPORT:{} / WEEKLY_SUMMARY:{} / CHECK_REMINDERS:{}
 HELP:{} / CHAT:{}
-相対日時→ISO8601+09:00。時刻のみ→今日補完。日付のみ→23:59:59。`;
+相対日時→ISO8601+09:00。時刻のみ→今日補完。タスクの日付のみ→23:59:59。予定の時刻なし→all_day:true,start_time=その日T00:00:00+09:00。`;
 
   // インテント判定には直近2ターン(4件)で十分
   const recentHistory = history.slice(-4);
@@ -58,7 +59,7 @@ HELP:{} / CHAT:{}
   try {
     const response = await anthropic.messages.create({
       model: HAIKU,
-      max_tokens: 150,
+      max_tokens: 200,
       system: systemPrompt,
       messages,
     });
@@ -87,7 +88,7 @@ LINEチャット。一言・挨拶→1〜2文。相談・質問→3〜4文。
 履歴を踏まえる。「さっき」「あれ」等の参照に対応。直前と同じ出だし・絵文字NG。意図不明なら一言で確認。
 
 【対応済み機能】※聞かれた時・自分の機能に言及する時だけ答える。聞かれてもいないのに機能一覧を出さない
-・予定：登録／確認（今日・明日・今週）／削除
+・予定：登録／確認（今日・明日・今週）／変更／削除。iPhoneのカレンダー（自宅・職場・シフトボード）と連動。登録時は職場か自宅を指定
 ・タスク：登録／完了／削除／一覧
 ・買い物リスト：追加／削除／購入済みチェック／一覧
 ・備品リマインド：「○○無くなりそう」で登録・補充管理
@@ -116,7 +117,7 @@ LINEチャット。一言・挨拶→1〜2文。相談・質問→3〜4文。
 
 export async function generateEveningMessage(data: {
   displayName: string;
-  tomorrowSchedules: Array<{ title: string; start_time: string; location?: string }>;
+  tomorrowSchedules: Array<{ title: string; start_time: string; location?: string | null }>;
   completedTasks: number;
   pendingTasks: number;
 }): Promise<string> {

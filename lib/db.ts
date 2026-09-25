@@ -242,23 +242,51 @@ export async function updateAppByName(
   }
 }
 
-export async function bulkInsertSchedules(
-  userId: string,
-  schedules: ScannedSchedule[]
-): Promise<number> {
-  let registered = 0;
-  for (const s of schedules) {
-    if (!s.start_time) continue;
-    try {
-      await query(
-        `INSERT INTO schedules (user_id, title, start_time, end_time, location, description)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [userId, s.title, s.start_time, s.end_time ?? null, s.location ?? null, s.description ?? null]
-      );
-      registered++;
-    } catch (e) {
-      console.error('[bulkInsertSchedules error]', e);
-    }
+// ── 確認待ちの操作（予定の登録先の聞き返し・変更/削除の確認）───────────────────
+// 15分以内の返事だけ受け付ける。古いものは無視する
+
+const PENDING_ACTION_TTL = "15 minutes";
+
+export async function savePendingAction(userId: string, action: unknown): Promise<void> {
+  await clearPendingAction(userId);
+  await query(
+    `INSERT INTO conversations (user_id, role, content) VALUES ($1, 'pending_action', $2)`,
+    [userId, JSON.stringify(action)]
+  );
+}
+
+export async function getPendingAction<T>(userId: string): Promise<T | null> {
+  const rows = await query<{ content: string }>(
+    `SELECT content FROM conversations
+     WHERE user_id = $1 AND role = 'pending_action'
+       AND created_at > NOW() - INTERVAL '${PENDING_ACTION_TTL}'
+     ORDER BY created_at DESC LIMIT 1`,
+    [userId]
+  );
+  if (!rows.length) return null;
+  try {
+    return JSON.parse(rows[0].content) as T;
+  } catch {
+    return null;
   }
-  return registered;
+}
+
+export async function clearPendingAction(userId: string): Promise<void> {
+  await query(`DELETE FROM conversations WHERE user_id = $1 AND role = 'pending_action'`, [userId]);
+}
+
+// ── iCloud 予定の LINE リマインド送信済み記録 ────────────────────────────────
+
+// まだ送っていなければ記録して true。同時実行でも片方だけが true になる
+export async function claimEventReminder(eventKey: string, kind: '1h' | '30m'): Promise<boolean> {
+  const rows = await query(
+    `INSERT INTO event_reminders (event_key, kind) VALUES ($1, $2)
+     ON CONFLICT DO NOTHING RETURNING event_key`,
+    [eventKey, kind]
+  );
+  return rows.length > 0;
+}
+
+export async function cleanupEventReminders(): Promise<void> {
+  await query(`DELETE FROM event_reminders WHERE created_at < NOW() - INTERVAL '7 days'`);
 }

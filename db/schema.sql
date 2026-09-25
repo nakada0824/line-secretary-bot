@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- スケジュール（予定）
+-- スケジュール（予定）※ 2026-09 から予定は iCloud カレンダーに移行。このテーブルは未使用
 CREATE TABLE IF NOT EXISTS schedules (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
@@ -107,11 +107,12 @@ CREATE TABLE IF NOT EXISTS birthdays (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 会話履歴（AI文脈保持用）。pending_scan は画像スキャン結果の一時保存
+-- 会話履歴（AI文脈保持用）。pending_scan は画像スキャン結果、pending_action は確認待ちの操作の一時保存
 CREATE TABLE IF NOT EXISTS conversations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-  role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'pending_scan')),
+  role TEXT NOT NULL CONSTRAINT conversations_role_check
+    CHECK (role IN ('user', 'assistant', 'pending_scan', 'pending_action')),
   content TEXT NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -124,6 +125,14 @@ CREATE TABLE IF NOT EXISTS apps (
   url TEXT NOT NULL,
   keywords TEXT[] DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- iCloud 予定の LINE リマインド送信済み記録（event_key = UID|開始時刻、kind = 1h / 30m）
+CREATE TABLE IF NOT EXISTS event_reminders (
+  event_key TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (event_key, kind)
 );
 
 -- インデックス（クエリ高速化）

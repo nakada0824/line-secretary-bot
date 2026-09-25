@@ -19,11 +19,13 @@ export async function handleIntent(
 
   switch (intent) {
     case 'ADD_SCHEDULE':
-      return schedule.addSchedule(userId, data);
+      return schedule.addSchedule(userId, data, userMessage);
     case 'GET_SCHEDULES':
       return schedule.getSchedules(userId, data);
     case 'DELETE_SCHEDULE':
       return schedule.deleteSchedule(userId, data);
+    case 'UPDATE_SCHEDULE':
+      return schedule.updateSchedule(userId, data);
     case 'ADD_TASK':
       return task.addTask(userId, data);
     case 'GET_TASKS':
@@ -66,7 +68,7 @@ export async function handleIntent(
       return [
         '【できること一覧】',
         '',
-        '📅 予定 — 「明日14時に会議」「今日の予定は？」',
+        '📅 予定 — 「明日14時に会議を職場に」「今日の予定は？」（iPhoneのカレンダーと連動）',
         '✅ タスク — 「資料作成 優先度4 締め切り金曜」',
         '🛒 買い物 — 「牛乳と卵を買い物リストに」',
         '📝 メモ — 「〇〇をメモして」',

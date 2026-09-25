@@ -5,15 +5,17 @@ import {
   getConversationHistory,
   saveConversation,
   savePendingScan,
-  getPendingScan,
-  clearPendingScan,
-  bulkInsertSchedules,
   findAppByKeyword,
 } from '@/lib/db';
 import { detectIntent } from '@/lib/claude';
 import { scanImageForSchedules } from '@/lib/claude-vision';
 import { handleIntent } from '@/lib/handlers';
-import { runBackgroundReminders } from '@/lib/handlers/report';
+import { runTaskReminders } from '@/lib/handlers/report';
+import {
+  handlePendingScanReply,
+  handlePendingScheduleReply,
+  ASK_SCAN_CALENDAR,
+} from '@/lib/handlers/schedule';
 import { checkRateLimit, cleanupRateLimit, logSecurity, logError } from '@/lib/security';
 import { LineEvent } from '@/types';
 
@@ -22,9 +24,6 @@ export const maxDuration = 60;
 
 const MAX_BODY_BYTES  = 512 * 1024;
 const MAX_MSG_LENGTH  = 1_000;
-
-const CONFIRM_YES = /^(はい|yes|登録(して)?|ok|OK|オッケー|お願い(します?)?|よろしく)[!！。\s]*$/i;
-const CONFIRM_NO  = /^(いいえ|no|キャンセル|やめ(る|て|ます)?|不要|取消|取り消し)[!！。\s]*$/i;
 
 export async function POST(request: NextRequest): Promise<Response> {
   const contentType = request.headers.get('content-type') ?? '';
@@ -82,7 +81,7 @@ async function processEvent(event: LineEvent): Promise<void> {
             '中田さんの日常をサポートします！',
             '',
             '【できること】',
-            '📅 「明日14時に会議」→ 予定追加・管理',
+            '📅 「明日14時に会議を職場に」→ iPhoneのカレンダーに予定追加',
             '✅ 「資料作成 優先度4 締め切り金曜」→ タスク管理',
             '🛒 「牛乳と卵を買い物リストに」→ 買い物リスト',
             '📝 「〇〇をメモして」→ メモ記録',
@@ -156,8 +155,18 @@ async function processEvent(event: LineEvent): Promise<void> {
     await upsertUser(userId);
     const history = await getConversationHistory(userId);
 
-    // ── 画像スキャン確認（「はい」「いいえ」）──────────────────────────────
-    if (await checkPendingScanConfirmation(userId, userMessage, replyToken)) return;
+    // ── 確認待ちへの返事（画像スキャンの登録先・予定の登録先・変更/削除の確認）──
+    const pendingReply =
+      (await handlePendingScanReply(userId, userMessage)) ??
+      (await handlePendingScheduleReply(userId, userMessage));
+    if (pendingReply) {
+      await replyMessage(replyToken, [textMessage(pendingReply)]);
+      Promise.allSettled([
+        saveConversation(userId, 'user', userMessage),
+        saveConversation(userId, 'assistant', pendingReply),
+      ]).catch((err) => logError('background_tasks', err, { uid: userId.slice(0, 8) }));
+      return;
+    }
 
     // ── アプリキーワード呼び出し（管理コマンドは除外） ────────────────────
     const APP_MGMT = /アプリ(登録|削除|変更|更新|一覧)|登録して.*(url|URL|http)/i;
@@ -183,7 +192,7 @@ async function processEvent(event: LineEvent): Promise<void> {
     Promise.allSettled([
       saveConversation(userId, 'user', userMessage),
       saveConversation(userId, 'assistant', response),
-      runBackgroundReminders(userId),
+      runTaskReminders(userId),
     ]).catch((err) => logError('background_tasks', err, { uid: userId.slice(0, 8) }));
   } catch (err) {
     logError('processEvent', err, { uid: userId.slice(0, 8) });
@@ -253,49 +262,8 @@ async function handleImageMessage(
     lines.push('⚠️ 日時が不確かな予定は登録をスキップします');
   }
 
-  lines.push('', '「はい」で登録、「いいえ」でキャンセル');
+  lines.push('', ASK_SCAN_CALENDAR);
 
   await savePendingScan(userId, schedules);
   await replyMessage(replyToken, [textMessage(lines.join('\n'))]);
-}
-
-// ── 画像スキャン確認フロー ────────────────────────────────────────────────────
-
-async function checkPendingScanConfirmation(
-  userId: string,
-  userMessage: string,
-  replyToken: string
-): Promise<boolean> {
-  const isYes = CONFIRM_YES.test(userMessage);
-  const isNo  = CONFIRM_NO.test(userMessage);
-  if (!isYes && !isNo) return false;
-
-  const pending = await getPendingScan(userId);
-  if (!pending) return false;  // 保留スキャンがなければ通常処理へ
-
-  if (isNo) {
-    await clearPendingScan(userId);
-    await replyMessage(replyToken, [
-      textMessage('キャンセルしました。また画像を送ってください😊'),
-    ]);
-    return true;
-  }
-
-  // 「はい」→ 一括登録
-  const registered = await bulkInsertSchedules(userId, pending);
-  await clearPendingScan(userId);
-
-  if (registered === 0) {
-    await replyMessage(replyToken, [
-      textMessage('日時が確定している予定がありませんでした。\n別の画像をお試しください。'),
-    ]);
-    return true;
-  }
-
-  await replyMessage(replyToken, [
-    textMessage(
-      `✅ ${registered}件の予定を登録しました！\n\n📅 カレンダーで確認できます\nhttps://secretary-app-bay.vercel.app/calendar`
-    ),
-  ]);
-  return true;
 }
