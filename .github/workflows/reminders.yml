@@ -1,0 +1,18 @@
+name: reminders
+
+# 予定の1時間前・30分前、タスク締め切りのリマインドを5分おきに確認する
+# （Vercel Hobby の Cron は1日1回までのため GitHub Actions で起こす）
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: >
+          curl -fsS --max-time 60
+          -H "Authorization: Bearer ${{ secrets.REMINDER_SECRET }}"
+          https://line-secretary-bot-pink.vercel.app/api/cron/reminders

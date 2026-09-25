@@ -352,7 +352,8 @@ export async function getCheckReminders(userId: string): Promise<string> {
 }
 
 // ───────────────────────────── 自動バックグラウンドリマインド ─────────────────────────────
-// メッセージ受信ごとに呼ばれる。DBフラグ制御で重複送信を防ぐ。
+// 5分おきの定期実行（/api/cron/reminders）とメッセージ受信時に呼ばれる。
+// 送信済みフラグを UPDATE ... RETURNING で先に立てるので、同時に動いても二重送信しない。
 
 export async function runBackgroundReminders(userId: string): Promise<void> {
   const now = new Date();
@@ -367,52 +368,44 @@ export async function runBackgroundReminders(userId: string): Promise<void> {
   ]);
 }
 
+function fmtReminderTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('ja-JP', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Tokyo',
+  });
+}
+
 async function checkScheduleReminders(userId: string, now: Date): Promise<void> {
-  const in25m = new Date(now.getTime() + 25 * 60 * 1000);
   const in35m = new Date(now.getTime() + 35 * 60 * 1000);
-  const in55m = new Date(now.getTime() + 55 * 60 * 1000);
   const in65m = new Date(now.getTime() + 65 * 60 * 1000);
 
   type ScheduleRow = { id: string; title: string; start_time: string; location?: string };
 
-  const [res1h, res30m] = await Promise.all([
-    query<ScheduleRow>(
-      `SELECT id, title, start_time, location FROM schedules
-       WHERE user_id = $1 AND reminded_1h = false AND start_time >= $2 AND start_time <= $3`,
-      [userId, in55m.toISOString(), in65m.toISOString()]
-    ),
-    query<ScheduleRow>(
-      `SELECT id, title, start_time, location FROM schedules
-       WHERE user_id = $1 AND reminded_30m = false AND start_time >= $2 AND start_time <= $3`,
-      [userId, in25m.toISOString(), in35m.toISOString()]
-    ),
-  ]);
+  // 開始35分前を切ったもの → 30分前リマインド（1時間前は送らない）
+  const res30m = await query<ScheduleRow>(
+    `UPDATE schedules SET reminded_30m = true, reminded_1h = true
+     WHERE user_id = $1 AND reminded_30m = false AND start_time > $2 AND start_time <= $3
+     RETURNING id, title, start_time, location`,
+    [userId, now.toISOString(), in35m.toISOString()]
+  );
+  // 開始35〜65分前 → 1時間前リマインド
+  const res1h = await query<ScheduleRow>(
+    `UPDATE schedules SET reminded_1h = true
+     WHERE user_id = $1 AND reminded_1h = false AND start_time > $2 AND start_time <= $3
+     RETURNING id, title, start_time, location`,
+    [userId, in35m.toISOString(), in65m.toISOString()]
+  );
 
   for (const s of res1h) {
-    const t = new Date(s.start_time).toLocaleTimeString('ja-JP', {
-      hour: '2-digit',
-      minute: '2-digit',
-      timeZone: 'Asia/Tokyo',
-    });
-    await Promise.all([
-      pushMessage(userId, [
-        textMessage(`⏰ 1時間前リマインド\n\n📌 ${s.title}\n🕐 ${t}${s.location ? `\n📍 ${s.location}` : ''}\n\n準備はいいですか？`),
-      ]),
-      query('UPDATE schedules SET reminded_1h = true WHERE id = $1', [s.id]),
+    await pushMessage(userId, [
+      textMessage(`⏰ 1時間前リマインド\n\n📌 ${s.title}\n🕐 ${fmtReminderTime(s.start_time)}${s.location ? `\n📍 ${s.location}` : ''}\n\n準備はいいですか？`),
     ]);
   }
 
   for (const s of res30m) {
-    const t = new Date(s.start_time).toLocaleTimeString('ja-JP', {
-      hour: '2-digit',
-      minute: '2-digit',
-      timeZone: 'Asia/Tokyo',
-    });
-    await Promise.all([
-      pushMessage(userId, [
-        textMessage(`⏰ 30分前リマインド\n\n📌 ${s.title}\n🕐 ${t}${s.location ? `\n📍 ${s.location}` : ''}\n\nもうすぐです！`),
-      ]),
-      query('UPDATE schedules SET reminded_30m = true WHERE id = $1', [s.id]),
+    await pushMessage(userId, [
+      textMessage(`⏰ 30分前リマインド\n\n📌 ${s.title}\n🕐 ${fmtReminderTime(s.start_time)}${s.location ? `\n📍 ${s.location}` : ''}\n\nもうすぐです！`),
     ]);
   }
 }
@@ -434,51 +427,36 @@ async function checkTaskReminders(userId: string, now: Date): Promise<void> {
 
   type TaskRow = { id: string; title: string; deadline?: string };
 
+  const claim = (flag: 'reminded_week' | 'reminded_3days' | 'reminded_1day', from: Date, to: Date) =>
+    query<TaskRow>(
+      `UPDATE tasks SET ${flag} = true
+       WHERE user_id = $1 AND completed = false AND ${flag} = false
+         AND deadline >= $2 AND deadline <= $3
+       RETURNING id, title, deadline`,
+      [userId, from.toISOString(), to.toISOString()]
+    );
+
   const [week, three, one] = await Promise.all([
-    query<TaskRow>(
-      `SELECT id, title, deadline FROM tasks
-       WHERE user_id = $1 AND completed = false AND reminded_week = false
-         AND deadline >= $2 AND deadline <= $3`,
-      [userId, in3d.toISOString(), in7d.toISOString()]
-    ),
-    query<TaskRow>(
-      `SELECT id, title, deadline FROM tasks
-       WHERE user_id = $1 AND completed = false AND reminded_3days = false
-         AND deadline >= $2 AND deadline <= $3`,
-      [userId, in1d.toISOString(), in3d.toISOString()]
-    ),
-    query<TaskRow>(
-      `SELECT id, title FROM tasks
-       WHERE user_id = $1 AND completed = false AND reminded_1day = false
-         AND deadline >= $2 AND deadline <= $3`,
-      [userId, jst.toISOString(), in1d.toISOString()]
-    ),
+    claim('reminded_week', in3d, in7d),
+    claim('reminded_3days', in1d, in3d),
+    claim('reminded_1day', now, in1d),
   ]);
 
   for (const t of week) {
     const dl = new Date(t.deadline!).toLocaleDateString('ja-JP', {
       month: 'numeric', day: 'numeric', weekday: 'short', timeZone: 'Asia/Tokyo',
     });
-    await Promise.all([
-      pushMessage(userId, [textMessage(`📋 タスクリマインド（1週間前）\n\n「${t.title}」\n📆 締め切り: ${dl}\n\n計画的に進めましょう！`)]),
-      query('UPDATE tasks SET reminded_week = true WHERE id = $1', [t.id]),
-    ]);
+    await pushMessage(userId, [textMessage(`📋 タスクリマインド（1週間前）\n\n「${t.title}」\n📆 締め切り: ${dl}\n\n計画的に進めましょう！`)]);
   }
 
   for (const t of three) {
     const dl = new Date(t.deadline!).toLocaleDateString('ja-JP', {
       month: 'numeric', day: 'numeric', timeZone: 'Asia/Tokyo',
     });
-    await Promise.all([
-      pushMessage(userId, [textMessage(`⚠️ タスクリマインド（3日前）\n\n「${t.title}」\n📆 締め切り: ${dl}\n\nそろそろ本格的に取り組みましょう！`)]),
-      query('UPDATE tasks SET reminded_3days = true WHERE id = $1', [t.id]),
-    ]);
+    await pushMessage(userId, [textMessage(`⚠️ タスクリマインド（3日前）\n\n「${t.title}」\n📆 締め切り: ${dl}\n\nそろそろ本格的に取り組みましょう！`)]);
   }
 
   for (const t of one) {
-    await Promise.all([
-      pushMessage(userId, [textMessage(`🔴 タスクリマインド（前日・当日）\n\n「${t.title}」\n\n締め切りが迫っています！頑張れ！💪`)]),
-      query('UPDATE tasks SET reminded_1day = true WHERE id = $1', [t.id]),
-    ]);
+    await pushMessage(userId, [textMessage(`🔴 タスクリマインド（前日・当日）\n\n「${t.title}」\n\n締め切りが迫っています！頑張れ！💪`)]);
   }
 }
