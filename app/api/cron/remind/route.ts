@@ -52,13 +52,15 @@ export async function GET(request: NextRequest): Promise<Response> {
   const in2dScheds = on(in2d);
   const in3dScheds = on(in3d);
 
-  if (!todayScheds.length && !tomorrowScheds.length && !in2dScheds.length && !in3dScheds.length) {
-    return Response.json({ sent: false, reason: 'no schedules' });
-  }
-
   const lines: string[] = [];
   lines.push('おはようございます、中田さん！☀️');
   lines.push('今日のリマインドです。');
+
+  // 予定がない日も「ない」ことを知らせる（届かないと動いているか分からないため）
+  if (!todayScheds.length && !tomorrowScheds.length && !in2dScheds.length && !in3dScheds.length) {
+    lines.push('');
+    lines.push('今日から3日後まで、予定は入っていません🌿');
+  }
 
   if (in3dScheds.length > 0) {
     lines.push('');
