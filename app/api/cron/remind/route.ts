@@ -1,12 +1,14 @@
 import { NextRequest } from 'next/server';
-import { listEvents, type CalendarEvent } from '@/lib/icloud';
+import { listEvents, ensureAlarms, type CalendarEvent } from '@/lib/icloud';
 import { jstDayRange } from '@/lib/jst';
 import { iphoneCalendarUrl } from '@/lib/calendar-link';
 import { fmtEventTime } from '@/lib/handlers/schedule';
 import { pushMessage, textMessage } from '@/lib/line';
 
 export const runtime = 'nodejs';
-export const maxDuration = 30;
+export const maxDuration = 60;
+
+const ALARM_LOOKAHEAD_MS = 60 * 24 * 60 * 60 * 1000; // 60日先まで
 
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString('ja-JP', {
@@ -90,5 +92,11 @@ export async function GET(request: NextRequest): Promise<Response> {
 
   await pushMessage(userId, [textMessage(lines.join('\n'))]);
   console.log(`[remind cron] sent: today=${todayScheds.length} tomorrow=${tomorrowScheds.length} in2d=${in2dScheds.length} in3d=${in3dScheds.length}`);
-  return Response.json({ sent: true });
+
+  // iPhone / Mac で直接入れた予定にも、決まった iPhone 通知を付け足す
+  const alarms = await ensureAlarms(now, new Date(now.getTime() + ALARM_LOOKAHEAD_MS)).catch((e) => {
+    console.error('[remind cron] ensureAlarms error', e);
+    return null;
+  });
+  return Response.json({ sent: true, alarms });
 }

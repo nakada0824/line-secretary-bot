@@ -324,6 +324,19 @@ function touch(comp: ICAL.Component) {
   comp.updatePropertyWithValue('last-modified', utcNow());
 }
 
+// 終日予定は開始（0:00）基準なので「◯日前の9時」にする
+function allDayAlarmMinutes(): number[] {
+  return ALL_DAY_ALARM_DAYS.map((d) => d * 1440 - 9 * 60);
+}
+
+function addAlarm(vevent: ICAL.Component, title: string, minutesBefore: number) {
+  const alarm = new ICAL.Component('valarm');
+  alarm.updatePropertyWithValue('action', 'DISPLAY');
+  alarm.updatePropertyWithValue('description', title);
+  alarm.updatePropertyWithValue('trigger', ICAL.Duration.fromSeconds(-minutesBefore * 60));
+  vevent.addSubcomponent(alarm);
+}
+
 // 新しい予定の VCALENDAR を組み立てる
 export function buildNewEvent(
   uid: string,
@@ -344,17 +357,8 @@ export function buildNewEvent(
   setText(vevent, 'location', input.location);
   setText(vevent, 'description', input.description);
 
-  // 終日予定は開始（0:00）基準なので「◯日前の9時」にする
-  const triggers = input.all_day
-    ? ALL_DAY_ALARM_DAYS.map((d) => d * 1440 - 9 * 60)
-    : alarmMinutes;
-  for (const min of triggers) {
-    const alarm = new ICAL.Component('valarm');
-    alarm.updatePropertyWithValue('action', 'DISPLAY');
-    alarm.updatePropertyWithValue('description', input.title);
-    alarm.updatePropertyWithValue('trigger', ICAL.Duration.fromSeconds(-min * 60));
-    vevent.addSubcomponent(alarm);
-  }
+  const triggers = input.all_day ? allDayAlarmMinutes() : alarmMinutes;
+  for (const min of triggers) addAlarm(vevent, input.title, min);
   vcal.addSubcomponent(vevent);
   return vcal;
 }
@@ -451,4 +455,60 @@ export async function deleteEvent(id: string): Promise<void> {
   if (!res.ok && res.status !== 404) {
     throw new CalendarError(`iCloud の予定の削除に失敗しました（HTTP ${res.status}）`);
   }
+}
+
+// ── 通知の付け足し ───────────────────────────────────────────────────────────
+
+// from〜to に始まる自宅・職場の予定に、決まった通知（3日前・2日前・前日・1時間前・30分前、
+// 終日は 3日前・2日前・前日の9時）のうち足りないものを付け足す。
+// iPhone / Mac で直接入れた予定にも同じ通知を付けるため。既存の通知は消さない。
+// 繰り返し予定は書き換えない約束なので対象外。
+export async function ensureAlarms(from: Date, to: Date): Promise<{ checked: number; updated: number }> {
+  const client = await getClient();
+  const all = await getCalendars();
+  let checked = 0;
+  let updated = 0;
+
+  for (const name of WRITABLE_CALENDARS) {
+    const cal = all.find((c) => displayName(c) === name);
+    if (!cal) continue;
+    const objects = await client.fetchCalendarObjects({
+      calendar: cal,
+      timeRange: { start: from.toISOString(), end: to.toISOString() },
+    });
+
+    for (const obj of objects) {
+      if (!obj.data) continue;
+      try {
+        const vcal = parseCalendarData(obj.data);
+        const vevents = vcal.getAllSubcomponents('vevent');
+        if (vevents.length !== 1 || vevents[0].hasProperty('rrule')) continue;
+        const vevent = vevents[0];
+        const ev = new ICAL.Event(vevent);
+        if (toDate(ev.startDate) < from) continue;
+        checked++;
+
+        // 付いている「開始の◯分前」の通知
+        const existing = new Set<number>();
+        for (const alarm of vevent.getAllSubcomponents('valarm')) {
+          const trigger = alarm.getFirstPropertyValue('trigger');
+          if (trigger instanceof ICAL.Duration) existing.add(Math.round(-trigger.toSeconds() / 60));
+        }
+        const wanted = ev.startDate.isDate ? allDayAlarmMinutes() : [...TIMED_ALARM_MINUTES];
+        const missing = wanted.filter((m) => !existing.has(m));
+        if (!missing.length) continue;
+
+        for (const min of missing) addAlarm(vevent, ev.summary || '予定', min);
+        touch(vevent);
+        const res = await client.updateCalendarObject({
+          calendarObject: { url: obj.url, etag: obj.etag, data: vcal.toString() },
+        });
+        if (res.ok) updated++;
+        else console.warn(`[icloud] ensureAlarms update failed ${res.status}`, obj.url);
+      } catch (e) {
+        console.error('[icloud] ensureAlarms error', obj.url, e);
+      }
+    }
+  }
+  return { checked, updated };
 }
