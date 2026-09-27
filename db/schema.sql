@@ -136,6 +136,16 @@ CREATE TABLE IF NOT EXISTS event_reminders (
   PRIMARY KEY (event_key, kind)
 );
 
+-- 本体（塾の Mac の Claude Code）と Bot の状態の受け渡し
+--   heartbeat     : 本体が10分おきに updated_at を更新（生存確認）
+--   official_line : 本体が毎晩21:45ごろ書き込む {"unreplied": 2, "login_ok": true, "items": ["来週の欠席連絡", ...]}
+--   watchdog      : Bot の見張り役の状態（Bot が書く）
+CREATE TABLE IF NOT EXISTS secretary_status (
+  key TEXT PRIMARY KEY,
+  value JSONB,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- インデックス（クエリ高速化）
 CREATE INDEX IF NOT EXISTS idx_schedules_user_start ON schedules(user_id, start_time);
 CREATE INDEX IF NOT EXISTS idx_schedules_reminders ON schedules(reminded_1h, reminded_30m, start_time);

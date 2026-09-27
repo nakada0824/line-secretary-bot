@@ -2,6 +2,7 @@ import { query, getUserDisplayName, getUser, getAllUsers, claimEventReminder, cl
 import { pushMessage, textMessage } from '@/lib/line';
 import { generateEveningMessage, generateWeeklySummary } from '@/lib/claude';
 import { listEvents, ensureAlarms, type CalendarEvent } from '@/lib/icloud';
+import { checkHeartbeat } from '@/lib/watchdog';
 import { jstDayRange, jstWeekday } from '@/lib/jst';
 import { iphoneCalendarUrl } from '@/lib/calendar-link';
 import { isCalendarOwner, fmtEventTime } from '@/lib/handlers/schedule';
@@ -334,6 +335,12 @@ export async function runAllReminders(): Promise<{ users: number }> {
     runScheduleReminders().catch((e) => console.error('[schedule reminder error]', e)),
     ...users.map((u) => runTaskReminders(u.user_id)),
     cleanupEventReminders().catch((e) => console.error('[reminder cleanup error]', e)),
+    // 見張り：本体（塾の Mac）の heartbeat が止まっていたら知らせる
+    process.env.WEB_USER_ID
+      ? checkHeartbeat(process.env.WEB_USER_ID, new Date(), 'push').catch((e) =>
+          console.error('[watchdog error]', e)
+        )
+      : Promise.resolve(),
     // iPhone / Mac で直接入れた予定にも iPhone 通知を付け足す（朝7時以外にも拾う）
     process.env.ICLOUD_USERNAME
       ? ensureAlarms(new Date(), new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)).catch((e) =>

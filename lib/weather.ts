@@ -1,112 +1,55 @@
-interface WeatherData {
-  description: string;
-  temp_current: number;
-  temp_max: number;
-  temp_min: number;
-  chance_of_rain: number;
-  wind_speed_kmph: number;
-  umbrella: boolean;
-  tomorrow: {
-    description: string;
-    temp_max: number;
-    temp_min: number;
-    chance_of_rain: number;
-    umbrella: boolean;
-  } | null;
+// 三芳町の天気（Open-Meteo）。夜の通知で「明日の天気」に使う
+const LAT = 35.83;
+const LON = 139.53;
+
+export interface DailyWeather {
+  text: string;
+  max: number;
+  min: number;
+  morningPop: number | null; // 7〜9時の降水確率の最大
 }
 
-const maxRain = (hourly: Record<string, string>[] = []) =>
-  Math.max(0, ...hourly.map((h) => parseInt(h.chanceofrain ?? '0')));
+// WMO 天気コード → 日本語
+function describe(code: number): string {
+  if (code === 0) return '晴れ';
+  if (code <= 2) return '晴れ時々くもり';
+  if (code === 3) return 'くもり';
+  if (code === 45 || code === 48) return '霧';
+  if (code >= 51 && code <= 57) return '霧雨';
+  if (code >= 61 && code <= 67) return code >= 65 ? '強い雨' : '雨';
+  if (code >= 71 && code <= 77) return '雪';
+  if (code >= 80 && code <= 82) return 'にわか雨';
+  if (code >= 85 && code <= 86) return 'にわか雪';
+  if (code >= 95) return '雷雨';
+  return '不明';
+}
 
-const jaDesc = (condition: Record<string, unknown>) =>
-  (condition.lang_ja as { value: string }[])?.[0]?.value ??
-  (condition.weatherDesc as { value: string }[])?.[0]?.value ??
-  '不明';
-
-export async function getWeather(location = 'Tokyo'): Promise<WeatherData> {
-  const failed: WeatherData = {
-    description: '取得できませんでした',
-    temp_current: 0,
-    temp_max: 0,
-    temp_min: 0,
-    chance_of_rain: 0,
-    wind_speed_kmph: 0,
-    umbrella: false,
-    tomorrow: null,
-  };
-
+// date: JST の YYYY-MM-DD
+export async function getDailyWeather(date: string): Promise<DailyWeather> {
+  const url =
+    `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
+    '&hourly=precipitation_probability&daily=weather_code,temperature_2m_max,temperature_2m_min' +
+    `&timezone=Asia%2FTokyo&start_date=${date}&end_date=${date}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
   try {
-    const res = await fetch(
-      `https://wttr.in/${encodeURIComponent(location)}?format=j1`,
-      { next: { revalidate: 3600 } }
-    );
-    if (!res.ok) throw new Error('Weather fetch failed');
-
-    const json = await res.json();
-    const current = json.current_condition?.[0];
-    const today = json.weather?.[0];
-    const tmr = json.weather?.[1];
-
-    if (!current || !today) throw new Error('Invalid weather data');
-
-    const todayRain = maxRain(today.hourly);
-
-    const tomorrowData = tmr
-      ? (() => {
-          const rain = maxRain(tmr.hourly);
-          return {
-            description: jaDesc(tmr.hourly?.[4] ?? {}),
-            temp_max: parseInt(tmr.maxtempC ?? '0'),
-            temp_min: parseInt(tmr.mintempC ?? '0'),
-            chance_of_rain: rain,
-            umbrella: rain >= 50,
-          };
-        })()
-      : null;
-
-    return {
-      description: jaDesc(current),
-      temp_current: parseInt(current.temp_C ?? '0'),
-      temp_max: parseInt(today.maxtempC ?? '0'),
-      temp_min: parseInt(today.mintempC ?? '0'),
-      chance_of_rain: todayRain,
-      wind_speed_kmph: parseInt(current.windspeedKmph ?? '0'),
-      umbrella: todayRain >= 50,
-      tomorrow: tomorrowData,
+    const res = await fetch(url, { cache: 'no-store', signal: controller.signal });
+    if (!res.ok) throw new Error(`open-meteo HTTP ${res.status}`);
+    const j = (await res.json()) as {
+      hourly: { time: string[]; precipitation_probability: (number | null)[] };
+      daily: { weather_code: number[]; temperature_2m_max: number[]; temperature_2m_min: number[] };
     };
-  } catch {
-    return failed;
+    const morning = j.hourly.time
+      .map((t, i) => ({ hour: Number(t.slice(11, 13)), pop: j.hourly.precipitation_probability[i] }))
+      .filter((h) => h.hour >= 7 && h.hour <= 9 && h.pop != null)
+      .map((h) => h.pop as number);
+    return {
+      text: describe(j.daily.weather_code[0]),
+      max: Math.round(j.daily.temperature_2m_max[0]),
+      min: Math.round(j.daily.temperature_2m_min[0]),
+      morningPop: morning.length ? Math.max(...morning) : null,
+    };
+  } finally {
+    clearTimeout(timer);
   }
-}
-
-export function formatWeather(weather: WeatherData): string {
-  if (weather.description === '取得できませんでした') {
-    return '🌡️ 天気情報を取得できませんでした';
-  }
-
-  const umbrella = weather.umbrella ? '☂️ 傘を持っていってね！' : '☀️ 傘は不要です';
-
-  const lines = [
-    `【今日の天気】`,
-    `🌤️ ${weather.description}`,
-    `🌡️ 現在 ${weather.temp_current}℃（最高 ${weather.temp_max}℃ / 最低 ${weather.temp_min}℃）`,
-    `🌧️ 降水確率 ${weather.chance_of_rain}%`,
-    `💨 風速 ${weather.wind_speed_kmph} km/h`,
-    `${umbrella}`,
-  ];
-
-  if (weather.tomorrow) {
-    const t = weather.tomorrow;
-    const tUmbrella = t.umbrella ? '☂️ 傘が必要' : '☀️ 傘不要';
-    lines.push(
-      ``,
-      `【明日の天気】`,
-      `🌤️ ${t.description}`,
-      `🌡️ 最高 ${t.temp_max}℃ / 最低 ${t.temp_min}℃`,
-      `🌧️ 降水確率 ${t.chance_of_rain}%`,
-      `${tUmbrella}`,
-    );
-  }
-
-  return lines.join('\n');
 }
