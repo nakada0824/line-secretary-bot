@@ -1,6 +1,6 @@
 // 見張り役：本体（塾の Mac の Claude Code）の heartbeat が40分以上止まったら知らせる。
 // - 同じ停止で何度も送らない。復活したら1回だけ知らせる
-// - 深夜0〜7時は鳴らさず、朝7時の通知にまとめる
+// - 深夜0〜8時台は鳴らさず、朝8時の通知にまとめる
 // - 朝・夜の通知から呼ぶときは送らずに本文に混ぜる（通数を増やさない）
 
 import { getStatus, setStatus } from '@/lib/status';
@@ -53,8 +53,8 @@ export async function checkHeartbeat(
 
   const saved = await getStatus<WatchdogState>('watchdog');
   const state: WatchdogState = saved?.value ?? { status: 'up' };
-  // 0〜7時は鳴らさない。7時台も朝の通知（Vercel Cron は7時台のどこかで動く）に任せて2通にしない
-  const quiet = mode === 'push' && jstHour(now) < 8;
+  // 0〜8時台は鳴らさない。8時台も朝の通知（Vercel Cron は8時台のどこかで動く）に任せて2通にしない
+  const quiet = mode === 'push' && jstHour(now) < 9;
   const stale = now.getTime() - new Date(heartbeat.updated_at).getTime() > STALE_MS;
 
   const out: string[] = [];

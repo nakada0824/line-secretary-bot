@@ -8,7 +8,7 @@ export const maxDuration = 60;
 
 const ALARM_LOOKAHEAD_MS = 60 * 24 * 60 * 60 * 1000; // 60日先まで
 
-// 毎朝7時（vercel.json の Cron）に1日1通の通知を送る（出すものがない日は送らない）。中身は lib/morning-notice.ts
+// 毎朝8時（vercel.json の Cron、UTC 23時）に1日1通の通知を送る（出すものがない日は送らない）。中身は lib/morning-notice.ts
 export async function GET(request: NextRequest): Promise<Response> {
   const authHeader = request.headers.get('authorization');
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
